@@ -37,16 +37,16 @@ class ScheduleScreen extends StatelessWidget {
               children: [
                 const Text('내 루틴 시간표', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w600, color: Color(0xFF111827))),
                 const SizedBox(height: 24),
-                // 가로 스크롤이 가능한 요일 선택 버튼 목록
+                // 요일 선택 버튼 목록
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(
                     children: days.map((day) {
-                      final bool isSelected = appState.선택된요일 == day['short'];
+                      final bool isSelected = appState.selectedDay == day['short'];
                       return Padding(
                         padding: const EdgeInsets.only(right: 8),
                         child: InkWell(
-                          onTap: () => appState.요일설정(day['short']!),
+                          onTap: () => appState.setSelectedDay(day['short']!),
                           borderRadius: BorderRadius.circular(12),
                           child: AnimatedContainer(
                             duration: const Duration(milliseconds: 200),
@@ -74,17 +74,17 @@ class ScheduleScreen extends StatelessWidget {
             ),
           ),
 
-          // 중앙 루틴 목록 영역
+          // 루틴 목록 영역
           Expanded(
             child: ListView(
               padding: const EdgeInsets.fromLTRB(20, 24, 20, 120),
               children: [
-                if (appState.루틴불러오는중)
+                if (appState.isLoadingRoutines)
                   const Center(child: CircularProgressIndicator())
-                else if (appState.루틴목록.isEmpty)
-                  _buildEmptyState(appState.선택된요일)
+                else if (appState.routines.isEmpty)
+                  _buildEmptyState(appState.selectedDay)
                 else
-                  ...appState.루틴목록.map((routine) => _buildRoutineCard(context, routine, appState)),
+                  ...appState.routines.map((routine) => _buildRoutineCard(context, routine, appState)),
               ],
             ),
           ),
@@ -93,7 +93,6 @@ class ScheduleScreen extends StatelessWidget {
     );
   }
 
-  // 루틴 정보가 없을 때 표시할 안내 화면입니다.
   Widget _buildEmptyState(String day) {
     return Center(
       child: Column(
@@ -110,7 +109,6 @@ class ScheduleScreen extends StatelessWidget {
     );
   }
 
-  // 개별 루틴 정보를 담고 있는 카드 위젯입니다. 활성화 스위치를 포함합니다.
   Widget _buildRoutineCard(BuildContext context, Routine routine, AppProvider state) {
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
@@ -126,7 +124,6 @@ class ScheduleScreen extends StatelessWidget {
             padding: const EdgeInsets.all(20),
             child: Column(
               children: [
-                // 시간 표시와 온/오프 스위치
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -139,14 +136,13 @@ class ScheduleScreen extends StatelessWidget {
                     ),
                     Switch(
                       value: routine.enabled,
-                      onChanged: (_) => state.루틴상태전환(routine.id),
+                      onChanged: (_) => state.toggleRoutine(routine.id),
                       activeColor: Colors.white,
                       activeTrackColor: const Color(0xFF3B82F6),
                     ),
                   ],
                 ),
                 const SizedBox(height: 16),
-                // 출발지와 도착지 경로 표시
                 Row(
                   children: [
                     Text(routine.from, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500, color: Color(0xFF374151))),
@@ -157,7 +153,6 @@ class ScheduleScreen extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 12),
-                // 선호하는 버스 정보 안내문
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
@@ -178,7 +173,6 @@ class ScheduleScreen extends StatelessWidget {
               ],
             ),
           ),
-          // 루틴이 꺼져있을 때 흐릿하게 만드는 덮개
           if (!routine.enabled)
             Positioned.fill(
               child: Container(
