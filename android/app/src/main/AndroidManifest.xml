@@ -1,8 +1,21 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 인터넷 권한: 지도를 불러오기 위해 필수적으로 필요합니다. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 위치 권한: 사용자의 현재 위치를 파악하고 지도에 표시하기 위해 필요합니다. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
     <application
         android:label="busing"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:usesCleartextTraffic="true">
+
+        <!-- 카카오 지도 에이피아이 키를 시스템 메타데이터로 등록합니다. -->
+        <meta-data
+            android:name="com.kakao.sdk.AppKey"
+            android:value="c0b9cc8e269b1c5cee0d5fbcdbc97333" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
