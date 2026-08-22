@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
-import 'package:kakao_map_plugin/kakao_map_plugin.dart'; // 💡 추가
+import 'package:kakao_map_plugin/kakao_map_plugin.dart';
 import 'models.dart';
 import 'storage_service.dart';
 import 'services/routing_service.dart';
 import 'services/bus_api_service.dart';
 import 'services/kakao_routing_service.dart';
 import 'services/kakao_local_service.dart';
-import 'services/tmap_service.dart'; // 💡 추가
+import 'services/tmap_service.dart';
+
+enum WidgetBarMode { main, stopDetail }
 
 class AppProvider extends ChangeNotifier {
   final StorageService _storageService;
@@ -14,9 +16,35 @@ class AppProvider extends ChangeNotifier {
   final BusApiService _busApiService = BusApiService();
   final KakaoRoutingService _kakaoRoutingService = KakaoRoutingService();
   final KakaoLocalService _kakaoLocalService = KakaoLocalService();
-  final TmapService _tmapService = TmapService(); // 💡 추가
+  final TmapService _tmapService = TmapService();
 
   AppProvider(this._storageService);
+
+  // ── UI 상태 ──
+  WidgetBarMode _barMode = WidgetBarMode.main;
+  String? _selectedStopName;
+  bool _isAnalyzing = false;
+  bool _isServiceEnded = false;
+  bool _shouldFitBounds = false;
+  bool _isSearching = false;
+  bool _isLoadingArrivals = false;
+  int _selectedRouteIndex = 0;
+  String? _errorMessage; // 💡 추가
+
+  WidgetBarMode get barMode => _barMode;
+  String? get selectedStopName => _selectedStopName;
+  bool get isAnalyzing => _isAnalyzing;
+  bool get isServiceEnded => _isServiceEnded;
+  bool get shouldFitBounds => _shouldFitBounds;
+  bool get isSearching => _isSearching;
+  bool get isLoadingArrivals => _isLoadingArrivals;
+  int get selectedRouteIndex => _selectedRouteIndex;
+  String? get errorMessage => _errorMessage; // 💡 추가
+
+  void setBarMode(WidgetBarMode mode) {
+    _barMode = mode;
+    notifyListeners();
+  }
 
   // ── 지도 및 검색 상태 ──
   String _departLabel = '현재 위치';
@@ -29,64 +57,162 @@ class AppProvider extends ChangeNotifier {
   List<MapPin> get pins => _pins;
   PinType? get mapPending => _mapPending;
 
-  // ── 실시간 경로 분석 데이터 ──
+  // ── 데이터 리스트 ──
   List<BusRouteInfo> _recommendedRoutes = [];
-  bool _isAnalyzing = false;
-  bool _isServiceEnded = false;
-  List<Place> _favoritePlaces = []; // 💡 추가 (누락됨)
+  List<BusRouteInfo> _stopArrivals = [];
+  List<Place> _favoritePlaces = [];
   List<RouteSegment> _routeSegments = [];
   List<BusStop> _allGwangjuStations = [];
-  bool _shouldFitBounds = false;
+  List<dynamic> _rawItineraries = [];
+  List<Map<String, dynamic>> _searchResults = [];
 
   List<BusRouteInfo> get recommendedRoutes => _recommendedRoutes;
-  bool get isAnalyzing => _isAnalyzing;
-  bool get isServiceEnded => _isServiceEnded;
+  List<BusRouteInfo> get stopArrivals => _stopArrivals;
   List<Place> get favoritePlaces => _favoritePlaces;
   List<RouteSegment> get routeSegments => _routeSegments;
-  bool get shouldFitBounds => _shouldFitBounds; // Getter
+  List<Map<String, dynamic>> get searchResults => _searchResults;
 
-  // 자동 줌 완료 후 상태 초기화
+  // ── 메서드 ──
+
+  void setDepartLabel(String label, {double? lat, double? lng}) {
+    _departLabel = label;
+    if (lat != null && lng != null) {
+      _pins = [
+        ..._pins.where((p) => p.type != PinType.depart),
+        MapPin(x: lat, y: lng, type: PinType.depart)
+      ];
+    }
+    if (_arriveLabel.isNotEmpty) {
+      _triggerAnalysis();
+    }
+    notifyListeners();
+  }
+
+  Future<void> _triggerAnalysis() async {
+    final arrivePin = _pins.firstWhere((p) => p.type == PinType.arrive, orElse: () => MapPin(x: 0, y: 0, type: PinType.arrive));
+    if (arrivePin.x == 0) return;
+    
+    final departPin = _pins.firstWhere((p) => p.type == PinType.depart);
+    _isAnalyzing = true;
+    _isServiceEnded = false;
+    _errorMessage = null; // 초기화
+    notifyListeners();
+
+    final tmapData = await _tmapService.getTransitRoute(
+      LatLng(departPin.x, departPin.y), 
+      LatLng(arrivePin.x, arrivePin.y)
+    );
+
+    if (tmapData != null) {
+      final Map<String, dynamic> parsed = _tmapService.parseTmapData(tmapData);
+      
+      _errorMessage = parsed['errorMessage']; // 💡 에러 메시지 획득
+      _rawItineraries = parsed['rawItineraries'] ?? [];
+      _recommendedRoutes = List<BusRouteInfo>.from(parsed['busRoutes'] ?? []);
+      
+      if (_rawItineraries.isNotEmpty) {
+        selectRoute(0, notify: false);
+      }
+      
+      if (_recommendedRoutes.isEmpty) {
+        _isServiceEnded = true;
+      }
+      _shouldFitBounds = true;
+    } else {
+      _errorMessage = '데이터를 불러올 수 없습니다.';
+      _recommendedRoutes = [];
+      _routeSegments = [];
+      _isServiceEnded = true;
+    }
+    _isAnalyzing = false;
+    notifyListeners();
+  }
+
+  void setArriveLabel(String label, {double? lat, double? lng}) async {
+    _arriveLabel = label;
+    double targetLat = lat ?? 0;
+    double targetLng = lng ?? 0;
+
+    if (targetLat == 0) {
+      final selectedPlace = _favoritePlaces.firstWhere((p) => p.name == label, 
+        orElse: () => Place(id: '0', name: '', lat: 0, lng: 0, address: ''));
+      targetLat = selectedPlace.lat;
+      targetLng = selectedPlace.lng;
+    }
+      
+    if (targetLat != 0) {
+      _pins = [
+        ..._pins.where((p) => p.type != PinType.arrive),
+        MapPin(x: targetLat, y: targetLng, type: PinType.arrive)
+      ];
+      _triggerAnalysis();
+    }
+    notifyListeners();
+  }
+
+  Future<void> searchPlaces(String query) async {
+    if (query.isEmpty) {
+      _searchResults = [];
+      notifyListeners();
+      return;
+    }
+    _isSearching = true;
+    notifyListeners();
+    try {
+      _searchResults = await _kakaoLocalService.searchKeywords(query);
+    } catch (e) {
+      debugPrint('❌ [Search] 검색 실패: $e');
+    }
+    _isSearching = false;
+    notifyListeners();
+  }
+
+  Future<void> fetchStopArrivalInfo(double lat, double lng) async {
+    _isLoadingArrivals = true;
+    _stopArrivals = [];
+    _barMode = WidgetBarMode.stopDetail;
+    notifyListeners();
+
+    try {
+      final stop = _findClosestRealStop(lat, lng);
+      _selectedStopName = stop.name;
+      final arrivals = await _busApiService.getArrivalInfo(stop.id);
+      _stopArrivals = List<BusRouteInfo>.from(arrivals);
+    } catch (e) {
+      debugPrint('❌ [StopInfo] 정보 조회 실패: $e');
+    }
+
+    _isLoadingArrivals = false;
+    notifyListeners();
+  }
+
   void resetFitBounds() {
     _shouldFitBounds = false;
   }
 
-  // 장소 데이터 로드 및 정류소 DB 초기화
   Future<void> loadFavoritePlaces() async {
     _favoritePlaces = await _storageService.getFavoritePlaces();
-    
-    // 💡 수석 개발자: 정류소 마스터 DB 로드 및 분석
     _allGwangjuStations = await _storageService.getAllStations();
     if (_allGwangjuStations.isEmpty) {
-      debugPrint('📂 [Init] 광주 정류소 데이터를 최초 분석합니다 (네트워크 필요)...');
       _allGwangjuStations = await _busApiService.fetchAllGwangjuStations();
       await _storageService.saveAllStations(_allGwangjuStations);
-      debugPrint('📂 [Init] 광주 정류소 ${_allGwangjuStations.length}개 분석 완료 및 캐싱됨.');
-    } else {
-      debugPrint('📂 [Init] 로컬 캐시에서 ${_allGwangjuStations.length}개의 정류소를 불러왔습니다.');
     }
-    
-    // 💡 '학교' 버튼 좌표 보정 (기존 로직 유지)
     const double schoolLat = 35.1403165;
     const double schoolLng = 126.9355550;
     final index = _favoritePlaces.indexWhere((p) => p.name == '학교');
     if (index != -1) {
       _favoritePlaces[index] = Place(id: _favoritePlaces[index].id, name: '학교', lat: schoolLat, lng: schoolLng, address: '광주광역시 동구 필문대로 309');
     }
-    
     notifyListeners();
   }
 
-  // 💡 수석 개발자 핵심 알고리즘: 특정 좌표에서 가장 가까운 실제 정류소 찾기
   BusStop _findClosestRealStop(double lat, double lng) {
     if (_allGwangjuStations.isEmpty) {
       return BusStop(id: '2106', name: '조선대 정문', lat: 35.1430, lng: 126.9341);
     }
-    
     BusStop closest = _allGwangjuStations[0];
     double minDistance = double.infinity;
-    
     for (var stop in _allGwangjuStations) {
-      // 위경도 차이의 제곱합으로 단순 거리 비교 (성능 최우선)
       double dist = (stop.lat - lat) * (stop.lat - lat) + (stop.lng - lng) * (stop.lng - lng);
       if (dist < minDistance) {
         minDistance = dist;
@@ -94,117 +220,6 @@ class AppProvider extends ChangeNotifier {
       }
     }
     return closest;
-  }
-
-  // 💡 수석 개발자 수정: '학교' 좌표를 보호하면서 나머지 장소만 현재 위치로 보정
-  Future<void> updateDefaultPlacesWithLocation(double lat, double lng) async {
-    bool changed = false;
-    for (int i = 0; i < _favoritePlaces.length; i++) {
-      // '학교'가 아닌 경우에만 현재 위치로 보정합니다.
-      if (_favoritePlaces[i].name != '학교') {
-        _favoritePlaces[i] = Place(
-          id: _favoritePlaces[i].id,
-          name: _favoritePlaces[i].name,
-          lat: lat,
-          lng: lng,
-          address: '현재 위치 주변',
-        );
-        changed = true;
-      }
-    }
-    
-    if (changed) {
-      await _storageService.saveFavoritePlaces(_favoritePlaces);
-      notifyListeners();
-    }
-  }
-
-  // 장소 추가 (시연용)
-  Future<void> addFavoritePlace(Place place) async {
-    _favoritePlaces.add(place);
-    await _storageService.saveFavoritePlaces(_favoritePlaces);
-    notifyListeners();
-  }
-
-  void setDepartLabel(String label) {
-    _departLabel = label;
-    _runRouteAnalysis();
-    notifyListeners();
-  }
-
-  void setArriveLabel(String label) async {
-    _arriveLabel = label;
-    
-    final selectedPlace = _favoritePlaces.firstWhere((p) => p.name == label, 
-      orElse: () => Place(id: '0', name: '', lat: 0, lng: 0, address: ''));
-      
-    if (selectedPlace.name.isNotEmpty) {
-      final departPin = _pins.firstWhere((p) => p.type == PinType.depart);
-      
-      _pins = [
-        ..._pins.where((p) => p.type != PinType.arrive),
-        MapPin(x: selectedPlace.lat, y: selectedPlace.lng, type: PinType.arrive)
-      ];
-
-      _isAnalyzing = true;
-      _isServiceEnded = false;
-      notifyListeners();
-
-      // 💡 수석 개발자: Tmap API 단일 호출로 모든 데이터 획득
-      final tmapData = await _tmapService.getTransitRoute(
-        LatLng(departPin.x, departPin.y), 
-        LatLng(selectedPlace.lat, selectedPlace.lng)
-      );
-
-      if (tmapData != null) {
-        final Map<String, dynamic> parsed = _tmapService.parseTmapData(tmapData);
-        
-        // 1. 지도 경로 및 정류소 마커 업데이트
-        _routeSegments = parsed['segments'];
-        final List<LatLng> stops = parsed['stops'];
-        _pins = [
-          ..._pins.where((p) => p.type != PinType.busStop),
-          ...stops.map((s) => MapPin(x: s.latitude, y: s.longitude, type: PinType.busStop)),
-        ];
-
-        // 2. 버스 노선 정보 리스트 업데이트
-        _recommendedRoutes = parsed['busRoutes'];
-        
-        if (_recommendedRoutes.isEmpty) {
-          _isServiceEnded = true;
-        }
-
-        debugPrint('🎯 [Tmap] 엔진으로부터 ${_recommendedRoutes.length}개의 버스 정보 획득 완료');
-        _shouldFitBounds = true; // 💡 줌 조절 트리거 활성화
-      } else {
-        // Tmap API 실패 시 시뮬레이션
-        _createSimulatedPath(departPin, selectedPlace);
-        _recommendedRoutes = await _routingService.analyzeRoutes(departLabel: _departLabel, arriveLabel: _arriveLabel);
-      }
-      
-      _isAnalyzing = false;
-      notifyListeners();
-    }
-  }
-
-  void _createSimulatedPath(MapPin depart, Place dest) {
-    const double stationLat = 35.1430;
-    const double stationLng = 126.9341;
-    final boardingStop = LatLng(stationLat, stationLng);
-    
-    _routeSegments = [
-      RouteSegment(points: [LatLng(depart.x, depart.y), boardingStop], color: const Color(0xFF10B981), width: 8.0),
-      RouteSegment(points: [boardingStop, LatLng(35.1415, 126.9350), LatLng(35.1408, 126.9355), LatLng(dest.lat, dest.lng)], color: const Color(0xFF2563EB), width: 10.0),
-    ];
-    _pins = [
-      ..._pins.where((p) => p.type != PinType.busStop),
-      MapPin(x: stationLat, y: stationLng, type: PinType.busStop),
-    ];
-  }
-
-  void setMapPending(PinType? type) {
-    _mapPending = type;
-    notifyListeners();
   }
 
   void updateDepartLocation(double lat, double lng) {
@@ -216,32 +231,47 @@ class AppProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  void handleMapTap(double x, double y) {
-    if (_mapPending == null) return;
-    _pins = [..._pins.where((p) => p.type != _mapPending), MapPin(x: x, y: y, type: _mapPending!)];
-    if (_mapPending == PinType.depart) {
-      _departLabel = '지도에서 선택한 위치';
-    } else {
-      _arriveLabel = '지도에서 선택한 위치';
+  Future<void> updateDefaultPlacesWithLocation(double lat, double lng) async {
+    bool changed = false;
+    for (int i = 0; i < _favoritePlaces.length; i++) {
+      if (_favoritePlaces[i].name != '학교') {
+        _favoritePlaces[i] = Place(
+          id: _favoritePlaces[i].id,
+          name: _favoritePlaces[i].name,
+          lat: lat,
+          lng: lng,
+          address: '현재 위치 주변',
+        );
+        changed = true;
+      }
     }
-    _mapPending = null;
-    notifyListeners();
+    if (changed) {
+      await _storageService.saveFavoritePlaces(_favoritePlaces);
+      notifyListeners();
+    }
   }
 
-  void clearArrival() {
-    _arriveLabel = '';
-    _pins = _pins.where((p) => p.type != PinType.arrive).toList();
-    _recommendedRoutes = [];
-    notifyListeners();
+  void selectRoute(int index, {bool notify = true}) {
+    if (index < 0 || index >= _rawItineraries.length) return;
+    _selectedRouteIndex = index;
+    final pathData = _tmapService.parseItineraryPath(_rawItineraries[index]);
+    _routeSegments = pathData['segments'];
+    final List<Map<String, dynamic>> stops = pathData['stops'];
+    _pins = [
+      ..._pins.where((p) => p.type != PinType.busStop),
+      ...stops.map((s) {
+        final LatLng ll = s['latlng'];
+        return MapPin(x: ll.latitude, y: ll.longitude, type: PinType.busStop, address: s['type']);
+      }),
+    ];
+    _shouldFitBounds = true;
+    if (notify) notifyListeners();
   }
 
-  Future<void> _runRouteAnalysis() async {}
-
-  // ── 루틴 관리 상태 ──
+  // ── 루틴 및 프로필 (기존 유지) ──
   List<Routine> _routines = [];
   bool _isLoadingRoutines = true;
   String _selectedDay = '화';
-
   List<Routine> get routines => _routines;
   bool get isLoadingRoutines => _isLoadingRoutines;
   String get selectedDay => _selectedDay;
@@ -268,11 +298,9 @@ class AppProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ── 프로필 관리 상태 ──
   String _userName = '루틴버스 사용자';
   bool _darkMode = false;
   bool _notifOn = true;
-
   String get userName => _userName;
   bool get darkMode => _darkMode;
   bool get notifOn => _notifOn;

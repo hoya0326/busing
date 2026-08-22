@@ -73,6 +73,7 @@ class BusApiService {
           busArrivalRemaining: remainMin,
           walkTimeRemaining: 3, 
           travelDuration: 15,
+          totalDuration: remainMin + 15 + 3,
           routeDescription: '$stationName 정류장 승차', // 문구 수정
         );
       }).toList();

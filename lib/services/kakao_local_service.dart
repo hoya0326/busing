@@ -42,4 +42,26 @@ class KakaoLocalService {
     }
     return null;
   }
+
+  // 💡 [추가] 키워드로 장소 검색 (출발지/목적지 입력용)
+  Future<List<Map<String, dynamic>>> searchKeywords(String query) async {
+    if (_restApiKey.isEmpty) return [];
+    try {
+      final url = Uri.parse('https://dapi.kakao.com/v2/local/search/keyword.json?query=${Uri.encodeComponent(query)}&size=10');
+      final response = await http.get(url, headers: {'Authorization': 'KakaoAK $_restApiKey'});
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final List docs = data['documents'];
+        return docs.map((d) => {
+          'name': d['place_name'],
+          'address': d['address_name'],
+          'lat': double.parse(d['y']),
+          'lng': double.parse(d['x']),
+        }).toList();
+      }
+    } catch (e) {
+      print('❌ [Search] 키워드 검색 실패: $e');
+    }
+    return [];
+  }
 }

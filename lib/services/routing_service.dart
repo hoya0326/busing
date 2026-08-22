@@ -10,12 +10,13 @@ class RoutingService {
     // 연산 지연 시뮬레이션
     await Future.delayed(const Duration(milliseconds: 800));
 
-    final routes = [
+    final List<BusRouteInfo> routes = [
       BusRouteInfo(
         busName: '수완03',
         busArrivalRemaining: 7,
         walkTimeRemaining: 3,
         travelDuration: 15,
+        totalDuration: 25,
         routeDescription: '정류장까지 도보 3분',
       ),
       BusRouteInfo(
@@ -23,6 +24,7 @@ class RoutingService {
         busArrivalRemaining: 4,
         walkTimeRemaining: 4,
         travelDuration: 25,
+        totalDuration: 33,
         routeDescription: '도보 4분',
       ),
       BusRouteInfo(
@@ -30,6 +32,7 @@ class RoutingService {
         busArrivalRemaining: 2,
         walkTimeRemaining: 5,
         travelDuration: 18,
+        totalDuration: 30,
         routeDescription: '도보 5분',
       ),
     ];

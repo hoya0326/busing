@@ -11,15 +11,27 @@ class MapPin {
   final double x;
   final double y;
   final PinType type;
+  final String? address; // 💡 추가: 정류장 타입(승차/하차/환승) 등 정보를 담기 위함
 
-  MapPin({required this.x, required this.y, required this.type});
+  MapPin({
+    required this.x,
+    required this.y,
+    required this.type,
+    this.address,
+  });
 
-  Map<String, dynamic> toJson() => {'x': x, 'y': y, 'type': type.name};
+  Map<String, dynamic> toJson() => {
+    'x': x,
+    'y': y,
+    'type': type.name,
+    'address': address,
+  };
   
   factory MapPin.fromJson(Map<String, dynamic> json) => MapPin(
     x: json['x'],
     y: json['y'],
     type: PinType.values.firstWhere((e) => e.name == json['type']),
+    address: json['address'],
   );
 }
 
@@ -111,6 +123,7 @@ class BusRouteInfo {
   final int busArrivalRemaining;  // 버스 정류장 도착까지 남은 시간 (분)
   final int walkTimeRemaining;    // 정류장까지 걷는 시간 (분)
   final int travelDuration;       // 버스 탑승 후 목적지까지 주행 시간 (분)
+  final int totalDuration;        // 💡 추가: 총 소요 시간
   final String routeDescription;  // 경로 상세 설명
   
   // ── 알고리즘 연산 결과 ──
@@ -123,6 +136,7 @@ class BusRouteInfo {
     required this.busArrivalRemaining,
     required this.walkTimeRemaining,
     required this.travelDuration,
+    required this.totalDuration, // 💡 추가
     required this.routeDescription,
   }) {
     // 1. 도보-버스 싱크로율 연산: (버스 도착 시간) - (도보 소요 시간)

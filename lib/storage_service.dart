@@ -63,10 +63,7 @@ class StorageService {
   Future<List<Routine>> getRoutines() async {
     final jsonString = _instance.getString(_routinesKey);
     if (jsonString == null) {
-      return [
-        Routine(id: 1, time: '오전 08:30', from: '집', to: '학교 (조선대)', bus: '수완03'),
-        Routine(id: 2, time: '오후 06:30', from: '학교 (조선대)', to: '학원', bus: '지원151'),
-      ];
+      return [];
     }
     try {
       final List<dynamic> list = json.decode(jsonString);
