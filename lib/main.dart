@@ -20,9 +20,11 @@ void main() async {
 
     // 2. 환경 변수에서 키를 가져오고 .trim()으로 보이지 않는 공백/줄바꿈 제거
     String kakaoKey = (dotenv.env['KAKAO_NATIVE_APP_KEY'] ?? '').trim();
+    String tmapKey = (dotenv.env['TMAP_API_KEY'] ?? '').trim();
 
     // 디버깅용: 콘솔에 키가 정상적으로 찍히는지 확인
-    debugPrint('🔑 [Debug] 불러온 카카오 키 확인: ${kakaoKey.isNotEmpty ? "성공 (글자수: ${kakaoKey.length})" : "실패(비어있음)"}');
+    debugPrint('🔑 [Debug] 카카오 키 확인: ${kakaoKey.isNotEmpty ? "성공" : "실패"}');
+    debugPrint('🔑 [Debug] Tmap 키 확인: ${tmapKey.isNotEmpty ? "성공" : "실패"}');
 
     // 3. 카카오 지도 초기화
     AuthRepository.initialize(appKey: kakaoKey);
@@ -36,6 +38,7 @@ void main() async {
   final appProvider = AppProvider(storageService);
   await appProvider.loadRoutines();
   await appProvider.loadProfile();
+  await appProvider.loadFavoritePlaces(); // 추가
 
   runApp(
     MultiProvider(

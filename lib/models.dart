@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:kakao_map_plugin/kakao_map_plugin.dart'; // 💡 추가
 
 // ── 지도 관련 모델 ──
 
 // 지도상에서 위치를 구분하는 유형입니다.
-enum PinType { depart, arrive }
+enum PinType { depart, arrive, busStop } // 💡 busStop 추가
 
 // 지도의 좌표와 해당 위치의 성격을 정의합니다.
 class MapPin {
@@ -58,6 +59,40 @@ class Routine {
     to: json['to'],
     bus: json['bus'],
     enabled: json['enabled'] ?? true,
+  );
+}
+
+// ── 장소 모델 ──
+
+class Place {
+  final String id;
+  final String name;
+  final double lat;
+  final double lng;
+  final String address;
+
+  Place({
+    required this.id,
+    required this.name,
+    required this.lat,
+    required this.lng,
+    required this.address,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'lat': lat,
+    'lng': lng,
+    'address': address,
+  };
+
+  factory Place.fromJson(Map<String, dynamic> json) => Place(
+    id: json['id'],
+    name: json['name'],
+    lat: json['lat'],
+    lng: json['lng'],
+    address: json['address'],
   );
 }
 
@@ -128,4 +163,37 @@ class BusRouteInfo {
       case RouteStatus.hard: return '탑승 어려움';
     }
   }
+}
+
+// ── 버스 정류소 데이터 모델 ──
+
+class BusStop {
+  final String id;
+  final String name;
+  final double lat;
+  final double lng;
+
+  BusStop({required this.id, required this.name, required this.lat, required this.lng});
+
+  Map<String, dynamic> toJson() => {'id': id, 'name': name, 'lat': lat, 'lng': lng};
+  factory BusStop.fromJson(Map<String, dynamic> json) => BusStop(
+    id: json['id'],
+    name: json['name'],
+    lat: json['lat'],
+    lng: json['lng'],
+  );
+}
+
+// ── 경로 시각화 모델 ──
+
+class RouteSegment {
+  final List<LatLng> points;
+  final Color color;
+  final double width;
+
+  RouteSegment({
+    required this.points,
+    required this.color,
+    this.width = 6.0,
+  });
 }
