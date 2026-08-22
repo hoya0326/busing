@@ -43,6 +43,9 @@ dependencies:
   kakao_map_plugin: ^0.4.0
   permission_handler: ^11.3.1
   flutter_dotenv: ^6.0.1
+  geolocator: ^14.0.3
+  flutter_compass: ^0.8.1
+  xml: ^6.5.0
 dev_dependencies:
   flutter_test:
     sdk: flutter

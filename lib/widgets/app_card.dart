@@ -32,42 +32,45 @@ class AppCard extends StatelessWidget {
       ),
       color: backgroundColor ?? Colors.white,
       clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: padding ?? const EdgeInsets.all(24.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (title != null || subtitle != null) ...[
-                if (title != null)
-                  DefaultTextStyle(
-                    style: const TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.black,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: padding ?? const EdgeInsets.all(24.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (title != null || subtitle != null) ...[
+                  if (title != null)
+                    DefaultTextStyle(
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black,
+                      ),
+                      child: title!,
                     ),
-                    child: title!,
-                  ),
-                if (subtitle != null) ...[
-                  const SizedBox(height: 4),
-                  DefaultTextStyle(
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: Colors.grey[600],
+                  if (subtitle != null) ...[
+                    const SizedBox(height: 4),
+                    DefaultTextStyle(
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.grey[600],
+                      ),
+                      child: subtitle!,
                     ),
-                    child: subtitle!,
-                  ),
+                  ],
+                  const SizedBox(height: 24),
                 ],
-                const SizedBox(height: 24),
+                child,
+                if (footer != null) ...[
+                  const SizedBox(height: 24),
+                  footer!,
+                ],
               ],
-              child,
-              if (footer != null) ...[
-                const SizedBox(height: 24),
-                footer!,
-              ],
-            ],
+            ),
           ),
         ),
       ),
