@@ -63,8 +63,10 @@ class TmapService {
       );
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        final int duration = ((data['features'][0]['properties']['totalTime'] as num) / 60).round();
-        return duration;
+        final num? totalTime = data['features']?[0]?['properties']?['totalTime'];
+        if (totalTime != null) {
+          return (totalTime / 60).round();
+        }
       }
     } catch (e) {
       print('❌ [Tmap] 도보 시간 계산 실패: $e');
@@ -174,7 +176,11 @@ class TmapService {
       final plan = data['metaData']['plan'];
       final itineraries = plan['itineraries'] as List;
 
-      itineraries.sort((a, b) => (a['totalTime'] as num).compareTo(b['totalTime'] as num));
+      itineraries.sort((a, b) {
+        final aTime = (a['totalTime'] ?? 999999) as num;
+        final bTime = (b['totalTime'] ?? 999999) as num;
+        return aTime.compareTo(bTime);
+      });
       rawItineraries = itineraries.take(5).toList();
       
       for (var itinerary in rawItineraries) {
@@ -183,10 +189,17 @@ class TmapService {
         // 💡 [수정] 첫 번째 도보 구간의 시간만 추출
         int firstWalkTime = 0;
         if (legs.isNotEmpty && legs[0]['mode'] == 'WALK') {
-          firstWalkTime = ((legs[0]['duration'] as num) / 60).round();
+          final duration = legs[0]['duration'];
+          if (duration != null) {
+            firstWalkTime = ((duration as num) / 60).round();
+          }
         }
 
-        int totalTravelTime = ((itinerary['totalTime'] as num) / 60).round();
+        final totalTimeValue = itinerary['totalTime'];
+        int totalTravelTime = 0;
+        if (totalTimeValue != null) {
+          totalTravelTime = ((totalTimeValue as num) / 60).round();
+        }
 
         List<String> busNames = [];
         for (var leg in legs) {

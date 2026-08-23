@@ -1,137 +1,218 @@
+import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:xml/xml.dart';
-import 'package:kakao_map_plugin/kakao_map_plugin.dart'; // 💡 추가
+import 'package:kakao_map_plugin/kakao_map_plugin.dart';
 import '../models.dart';
+import '../data/bus_schedules.dart';
 
-class BusApiService {
-  // 광주광역시 공공데이터 통합 엔드포인트
-  final String _baseUrl = "http://api.gwangju.go.kr/xmlConfInfo.do";
-  final String _apiKey = dotenv.env['BUS_SERVICE_KEY'] ?? '';
+List<dynamic> _parseArrivalJson(String body) {
+  try {
+    final data = json.decode(body);
+    debugPrint('📦 [Parser] 분석 시작...');
 
-  // 📍 1. 주변 정류소 찾기 (좌표 및 이름 포함)
-  Future<Map<String, dynamic>?> getNearbyStation(double lat, double lng) async {
-    if (_apiKey.isEmpty) return null;
-
-    try {
-      final url = '$_baseUrl?serviceKey=$_apiKey&act=STATION_LIST&lat=$lat&lng=$lng';
-      final response = await http.get(Uri.parse(url));
-
-      if (response.statusCode == 200) {
-        final document = XmlDocument.parse(response.body);
-        final station = document.findAllElements('STATION_LIST').firstOrNull;
+    // 💡 [수석 개발자] 재귀적 리스트 검색 알고리즘 도입
+    // 어떤 깊이에 있든 ITEM 리스트를 찾아냅니다.
+    List<dynamic>? findItems(dynamic node) {
+      if (node == null) return null;
+      if (node is List) return node;
+      if (node is Map) {
+        if (node.containsKey('ITEM')) return node['ITEM'] is List ? node['ITEM'] : [node['ITEM']];
+        if (node.containsKey('item')) return node['item'] is List ? node['item'] : [node['item']];
         
-        if (station != null) {
-          final id = station.getElement('STATION_ID')?.innerText;
-          final name = station.getElement('BUSSTOP_NAME')?.innerText ?? '알 수 없음';
-          final sLat = double.tryParse(station.getElement('LAT')?.innerText ?? '0') ?? 0.0;
-          final sLng = double.tryParse(station.getElement('LONG')?.innerText ?? '0') ?? 0.0;
-          
-          return {
-            'id': id,
-            'name': name,
-            'lat': sLat,
-            'lng': sLng,
-          };
+        for (var key in ['ARRIVE_LIST', 'STATION_LIST', 'LINE_LIST', 'items', 'BODY', 'body', 'RESPONSE', 'response']) {
+          if (node.containsKey(key)) {
+            var found = findItems(node[key]);
+            if (found != null) return found;
+          }
         }
       }
-    } catch (e) {
-      print('❌ [BusAPI] 정류소 검색 실패: $e');
+      return null;
+    }
+
+    final items = findItems(data);
+    if (items != null) {
+      debugPrint('✅ [Parser] ${items.length}개의 아이템 추출 성공');
+      return items;
+    }
+  } catch (e) {
+    debugPrint('❌ [Parser] 에러: $e');
+  }
+  debugPrint('⚠️ [Parser] 아이템을 찾지 못했습니다.');
+  return [];
+}
+
+class BusApiService {
+  final String _baseUrl = "http://apis.data.go.kr/6290000/gj_bis/";
+  final String _apiKey = (dotenv.env['BUS_SERVICE_KEY'] ?? '').trim();
+  
+  List<dynamic>? _cachedStations;
+
+  Future<void> initStationCache() async {
+    if (_apiKey.isEmpty) return;
+    try {
+      if (_cachedStations == null) {
+        final url = '${_baseUrl}stationInfo?serviceKey=$_apiKey&resultType=json&numOfRows=3000';
+        final response = await http.get(Uri.parse(url));
+        if (response.statusCode == 200) {
+          final data = json.decode(response.body);
+          _cachedStations = data['STATION_LIST'] ?? data['RESPONSE']?['STATION_LIST']?['ITEM'] ?? [];
+          if (_cachedStations!.isNotEmpty) {
+            // 💡 [수석 개발자] '돌고개' 정류장을 찾아 실제 필드 구조 정밀 분석
+            final dolgogae = _cachedStations!.firstWhere(
+              (s) => s['BUSSTOP_NAME']?.toString().contains('돌고개') ?? false,
+              orElse: () => _cachedStations!.first
+            );
+            debugPrint('📍 [BusAPI] 스테이션 캐시 분석 (돌고개): $dolgogae');
+          }
+        }
+      }
+    } catch (e) { debugPrint('❌ [GJ-BIS] 로드 실패: $e'); }
+  }
+
+  Future<Map<String, dynamic>?> getStationByNameOrCoords({String? name, double? lat, double? lng}) async {
+    if (_cachedStations == null) await initStationCache();
+    if (_cachedStations == null) return null;
+    dynamic closest;
+    double minDistance = double.infinity;
+    for (var s in _cachedStations!) {
+      final sLat = double.tryParse(s['LATITUDE']?.toString() ?? '0') ?? 0.0;
+      final sLng = double.tryParse(s['LONGITUDE']?.toString() ?? '0') ?? 0.0;
+      if (sLat == 0) continue;
+      if (lat != null && lng != null) {
+        double dist = (sLat - lat).abs() + (sLng - lng).abs();
+        if (dist < minDistance) { minDistance = dist; closest = s; }
+      }
+    }
+    if (closest != null) {
+      // 💡 [수석 개발자] API 조회용 ID(Internal)와 ARS ID를 모두 반환하도록 개선
+      return {
+        'id': (closest['STATION_ID'] ?? closest['BUSSTOP_ID'])?.toString(),
+        'arsId': closest['BUSSTOP_ID']?.toString(),
+        'name': closest['BUSSTOP_NAME'],
+        'lat': double.tryParse(closest['LATITUDE']?.toString() ?? '0'),
+        'lng': double.tryParse(closest['LONGITUDE']?.toString() ?? '0'),
+      };
     }
     return null;
   }
 
-  // 📍 2. 특정 정류소의 실시간 도착 정보 조회 (버스 도착정보 서비스 API)
-  Future<List<BusRouteInfo>> getArrivalInfo(String stationId) async {
-    if (_apiKey.isEmpty) return [];
+  Future<List<BusRouteInfo>> getArrivalInfo(String busStopId, {String? stopName}) async {
+    debugPrint('📡 [StopInfo] getArrivalInfo 호출: ID=$busStopId, Name=$stopName');
+    List<BusRouteInfo> liveArrivals = [];
+    
+    if (busStopId != 'Unknown' && busStopId.isNotEmpty && _apiKey.isNotEmpty) {
+      try {
+        // 💡 [수석 개발자] 포털 API의 다양한 변수명을 대응하기 위한 다중 시도 로직
+        final List<String> idParams = ['BUSSTOP_ID', 'busStopId', 'STATION_ID', 'stationId'];
+        
+        for (var param in idParams) {
+          final url = '${_baseUrl}arriveInfo?serviceKey=$_apiKey&resultType=json&$param=$busStopId';
+          final response = await http.get(Uri.parse(url));
+          
+          if (response.statusCode == 200) {
+            // XML이 반환되는 경우(API 에러)를 필터링
+            if (response.body.trim().startsWith('<')) {
+              debugPrint('⚠️ [BusAPI] XML 응답 수신 ($param): ${response.body.substring(0, 50)}...');
+              continue;
+            }
 
-    try {
-      final url = '$_baseUrl?serviceKey=$_apiKey&act=BUS_ARR_INFO&STATION_ID=$stationId';
-      final response = await http.get(Uri.parse(url));
+            final items = await compute(_parseArrivalJson, response.body);
+            if (items.isNotEmpty) {
+              debugPrint('✅ [BusAPI] $param 으로 데이터 획득 성공! (${items.length}개)');
+              liveArrivals = items.map((item) {
+                final lineName = item['LINE_NAME'] ?? item['lineName'] ?? item['SHORT_LINE_NAME'] ?? '버스';
+                final remainMinVal = item['REMAIN_MIN'] ?? item['remainMin'] ?? '0';
+                final dirEnd = item['DIR_END'] ?? item['dirEnd'] ?? '종점';
+                final remainStop = item['REMAIN_STOP'] ?? item['remainStop'] ?? '-';
 
-      if (response.statusCode == 200) {
-        return _parseArrivalXml(response.body);
-      }
-    } catch (e) {
-      print('❌ [BusAPI] 도착 정보 조회 실패: $e');
+                return BusRouteInfo(
+                  busName: lineName.toString(),
+                  busArrivalRemaining: int.tryParse(remainMinVal.toString()) ?? 0,
+                  walkTimeRemaining: 0, travelDuration: 15, totalDuration: (int.tryParse(remainMinVal.toString()) ?? 0) + 15,
+                  routeDescription: '$dirEnd 방면 ($remainStop구간 전)',
+                );
+              }).toList();
+              break; // 데이터 찾았으면 종료
+            }
+          }
+        }
+      } catch (e) { debugPrint('❌ [GJ-BIS] 실시간 조회 에러: $e'); }
     }
-    return [];
+
+    // Step 2: 기점/종점 시간표 정보 추가
+    if (stopName != null) {
+      final scheduled = await _getScheduledArrivals(stopName);
+      for (var s in scheduled) {
+        if (!liveArrivals.any((l) => l.busName == s.busName)) {
+          liveArrivals.add(s);
+        }
+      }
+    }
+    
+    return liveArrivals;
   }
 
-  List<BusRouteInfo> _parseArrivalXml(String xmlString) {
+  Future<List<BusRouteInfo>> _getScheduledArrivals(String stopName) async {
+    final cleanStopName = stopName.split('|')[0].replaceAll(RegExp(r'\(.*\)'), '').replaceAll(' ', '').trim();
+    final now = DateTime.now();
+    final dayType = now.weekday; 
+
+    List<BusRouteInfo> results = [];
+
     try {
-      final document = XmlDocument.parse(xmlString);
-      final items = document.findAllElements('BUS_ARR_INFO');
-
-      return items.map((node) {
-        final busName = node.getElement('LINE_NAME')?.innerText ?? '알 수 없음';
-        final remainMin = int.tryParse(node.getElement('REMAIN_MIN')?.innerText ?? '0') ?? 0;
-        final stationName = node.getElement('BUSSTOP_NAME')?.innerText ?? '';
-
-        return BusRouteInfo(
-          busName: busName,
-          busArrivalRemaining: remainMin,
-          walkTimeRemaining: 3, 
-          travelDuration: 15,
-          totalDuration: remainMin + 15 + 3,
-          routeDescription: '$stationName 정류장 승차', // 문구 수정
-        );
+      final matchedSchedules = gwangjuBusSchedules.where((s) {
+        String station = s.startStation.replaceAll(' ', '');
+        return cleanStopName.contains(station) || station.contains(cleanStopName);
       }).toList();
-    } catch (e) {
-      print('❌ [BusAPI] XML 파싱 에러: $e');
-      return [];
-    }
-  }
 
-  // 📍 3. 노선의 실제 주행 경로 좌표 리스트 조회 (버스 노선정보 서비스 API)
-  Future<List<LatLng>> getRoutePathNodes(String lineId) async {
-    if (_apiKey.isEmpty) return [];
+      for (var schedule in matchedSchedules) {
+        List<String> times = (dayType == 6) ? schedule.saturday : (dayType == 7 ? schedule.sunday : schedule.weekday);
+        if (times.isEmpty) times = schedule.weekday;
 
-    try {
-      // 광주 API: 특정 노선의 전체 경유 노드(좌표) 목록 조회
-      final url = '$_baseUrl?serviceKey=$_apiKey&act=ROUTE_NODE_LIST&LINE_ID=$lineId';
-      final response = await http.get(Uri.parse(url));
-
-      if (response.statusCode == 200) {
-        final document = XmlDocument.parse(response.body);
-        final items = document.findAllElements('ROUTE_NODE_LIST');
-
-        return items.map((node) {
-          final lat = double.tryParse(node.getElement('LAT')?.innerText ?? '0') ?? 0.0;
-          final lng = double.tryParse(node.getElement('LONG')?.innerText ?? '0') ?? 0.0;
-          return LatLng(lat, lng);
-        }).where((latLng) => latLng.latitude != 0).toList();
+        for (var t in times) {
+          final p = t.split(':');
+          if (p.length < 2) continue;
+          final dep = DateTime(now.year, now.month, now.day, int.parse(p[0]), int.parse(p[1]));
+          
+          if (dep.isAfter(now)) {
+            final diff = dep.difference(now).inMinutes;
+            results.add(BusRouteInfo(
+              busName: schedule.routeName,
+              busArrivalRemaining: diff,
+              walkTimeRemaining: 0, 
+              travelDuration: 15, 
+              totalDuration: diff + 15,
+              routeDescription: '${schedule.startStation} 출발 예정 (시간표)',
+            ));
+            break; 
+          }
+        }
       }
-    } catch (e) {
-      print('❌ [BusAPI] 노선 경로 조회 실패: $e');
-    }
-    return [];
+    } catch (e) { debugPrint('❌ [Schedule] 에러: $e'); }
+    return results;
   }
 
-  // 📍 [추가] 광주광역시 전체 정류소 목록을 가져와서 분석합니다.
   Future<List<BusStop>> fetchAllGwangjuStations() async {
     if (_apiKey.isEmpty) return [];
+    if (_cachedStations == null) await initStationCache();
+    if (_cachedStations == null) return [];
 
     try {
-      final url = '$_baseUrl?serviceKey=$_apiKey&act=STATION_LIST';
-      final response = await http.get(Uri.parse(url));
-
-      if (response.statusCode == 200) {
-        final document = XmlDocument.parse(response.body);
-        final items = document.findAllElements('STATION_LIST');
-
-        return items.map((node) {
-          return BusStop(
-            id: node.getElement('STATION_ID')?.innerText ?? '',
-            name: node.getElement('BUSSTOP_NAME')?.innerText ?? '알 수 없음',
-            lat: double.tryParse(node.getElement('LAT')?.innerText ?? '0') ?? 0.0,
-            lng: double.tryParse(node.getElement('LONG')?.innerText ?? '0') ?? 0.0,
-          );
-        }).where((s) => s.lat != 0).toList();
-      }
+      return _cachedStations!.map((s) {
+        // 💡 [핵심] 실시간 도착 정보 조회에는 STATION_ID가 필요합니다.
+        final id = s['STATION_ID']?.toString() ?? s['BUSSTOP_ID']?.toString() ?? '';
+        return BusStop(
+          id: id,
+          name: s['BUSSTOP_NAME'] ?? '알 수 없음',
+          lat: double.tryParse(s['LATITUDE']?.toString() ?? '0') ?? 0.0,
+          lng: double.tryParse(s['LONGITUDE']?.toString() ?? '0') ?? 0.0,
+        );
+      }).where((s) => s.lat != 0).toList();
     } catch (e) {
-      print('❌ [BusAPI] 전체 정류소 분석 실패: $e');
+      debugPrint('❌ [BusAPI] 전체 정류소 변환 실패: $e');
+      return [];
     }
-    return [];
   }
 }

@@ -160,10 +160,10 @@ class _HomeScreenState extends State<HomeScreen> {
       }
       
       overlays.add(CustomOverlay(
-        customOverlayId: 'bus_stop_${pin.x}_${pin.y}',
+        customOverlayId: 'bus_stop_${pin.x.toStringAsFixed(6)}_${pin.y.toStringAsFixed(6)}',
         latLng: LatLng(pin.x, pin.y),
         content: '''
-          <div style="display: flex; flex-direction: column; align-items: center; pointer-events: none;">
+          <div style="display: flex; flex-direction: column; align-items: center; cursor: pointer;">
             <div style="background: ${colorToHex(color)}; color: white; padding: 3px 9px; border-radius: 12px; font-size: 11px; font-weight: bold; margin-bottom: 2px; box-shadow: 0 2px 4px rgba(0,0,0,0.2); white-space: nowrap; border: 1px solid rgba(255,255,255,0.3);">
               $label
             </div>
@@ -421,11 +421,16 @@ class _HomeScreenState extends State<HomeScreen> {
                       center: _currentPosition!,
                       customOverlays: _generateOverlays(appProvider),
                       markers: appProvider.pins.where((p) => p.type == PinType.busStop).map((p) => Marker(
-                        markerId: 'stop_${p.x}_${p.y}',
+                        markerId: 'stop_${p.x.toStringAsFixed(6)}_${p.y.toStringAsFixed(6)}',
                         latLng: LatLng(p.x, p.y),
                         width: 48, height: 48,
                       )).toList(),
                       onMarkerTap: (markerId, latLng, zoomLevel) async {
+                        debugPrint('📌 [Map] 마커 클릭됨: $markerId at $latLng');
+                        await context.read<AppProvider>().fetchStopArrivalInfo(latLng.latitude, latLng.longitude);
+                      },
+                      onCustomOverlayTap: (overlayId, latLng) async {
+                        debugPrint('📌 [Map] 오버레이 클릭됨: $overlayId at $latLng');
                         await context.read<AppProvider>().fetchStopArrivalInfo(latLng.latitude, latLng.longitude);
                       },
                       polylines: appProvider.routeSegments.map((segment) => Polyline(

@@ -168,6 +168,7 @@ class AppProvider extends ChangeNotifier {
   }
 
   Future<void> fetchStopArrivalInfo(double lat, double lng) async {
+    debugPrint('📡 [Provider] fetchStopArrivalInfo 시작: $lat, $lng');
     _isLoadingArrivals = true;
     _stopArrivals = [];
     _barMode = WidgetBarMode.stopDetail;
@@ -175,8 +176,10 @@ class AppProvider extends ChangeNotifier {
 
     try {
       final stop = _findClosestRealStop(lat, lng);
+      debugPrint('📍 [Provider] 가장 가까운 정류장 매핑: ${stop.name} (${stop.id})');
       _selectedStopName = stop.name;
-      final arrivals = await _busApiService.getArrivalInfo(stop.id);
+      final arrivals = await _busApiService.getArrivalInfo(stop.id, stopName: stop.name);
+      debugPrint('🚌 [Provider] 도착 정보 수신 완료: ${arrivals.length}개 노선');
       _stopArrivals = List<BusRouteInfo>.from(arrivals);
     } catch (e) {
       debugPrint('❌ [StopInfo] 정보 조회 실패: $e');
