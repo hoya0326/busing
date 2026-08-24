@@ -1,3 +1,4 @@
+import 'dart:async'; // 💡 unawaited 사용을 위해 추가
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
@@ -10,9 +11,14 @@ import 'screens/home_screen.dart';
 import 'screens/schedule_screen.dart';
 import 'screens/notification_screen.dart';
 import 'screens/profile_screen.dart';
+import 'services/notification_service.dart'; // 💡 추가
 
 void main() async {
+  debugPrint('🚀 [System] 앱 시작 프로세스 가동');
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // 알림 서비스 초기화
+  await NotificationService().init();
 
   try {
     // 1. .env 파일 로드
@@ -36,9 +42,11 @@ void main() async {
   await storageService.init();
 
   final appProvider = AppProvider(storageService);
-  await appProvider.loadRoutines();
-  await appProvider.loadProfile();
-  await appProvider.loadFavoritePlaces(); // 추가
+  
+  // 💡 [수석 개발자] 앱 부팅 속도 개선: 데이터 로딩을 비동기로 전환하여 첫 화면 진입 차단 방지
+  unawaited(appProvider.loadRoutines());
+  unawaited(appProvider.loadProfile());
+  unawaited(appProvider.loadFavoritePlaces());
 
   runApp(
     MultiProvider(

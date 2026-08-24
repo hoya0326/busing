@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart'; // 💡 debugPrint 사용을 위해 추가
 import 'package:shared_preferences/shared_preferences.dart';
 import 'models.dart';
 
@@ -6,7 +7,8 @@ class StorageService {
   static const String _routinesKey = 'routines';
   static const String _userNameKey = 'userName';
   static const String _favoritePlacesKey = 'favorite_places';
-  static const String _allStationsKey = 'gwangju_stations'; // 💡 추가
+  static const String _recentSearchesKey = 'recent_searches'; // 💡 최근 검색어 키 추가
+  static const String _allStationsKey = 'gwangju_stations';
 
   SharedPreferences? _prefs;
 
@@ -45,6 +47,45 @@ class StorageService {
   Future<void> saveFavoritePlaces(List<Place> places) async {
     final jsonString = json.encode(places.map((e) => e.toJson()).toList());
     await _instance.setString(_favoritePlacesKey, jsonString);
+  }
+
+  // ── 💡 [Request 8] Atcha 스타일의 최근 검색어 로컬 저장 및 자가 치유 로직 ──
+
+  /// 최근 검색어 목록 가져오기 (데이터 손상 시 빈 배열 반환하여 자가 치유)
+  Future<List<Place>> getRecentSearches() async {
+    try {
+      final jsonString = _instance.getString(_recentSearchesKey);
+      if (jsonString == null) return [];
+      
+      final List<dynamic> decoded = json.decode(jsonString);
+      return decoded.map((e) => Place.fromJson(e)).toList();
+    } catch (e) {
+      debugPrint('⚠️ [Storage] 최근 검색어 데이터 손상 감지. 초기화합니다.');
+      return []; // 자가 치유: 에러 시 빈 리스트 반환
+    }
+  }
+
+  /// 새로운 검색어 저장 (중복 제거, 최신순 정렬, 개수 제한)
+  Future<void> saveRecentSearch(Place place) async {
+    try {
+      List<Place> current = await getRecentSearches();
+      
+      // 1. 중복 방지: 동일한 ID나 좌표의 장소 제거
+      current.removeWhere((p) => p.name == place.name && p.lat == place.lat);
+      
+      // 2. 최신순 정렬: 맨 앞에 추가
+      current.insert(0, place);
+      
+      // 3. 개수 제한: 최대 10개만 유지 (메모리 관리)
+      if (current.length > 10) {
+        current = current.sublist(0, 10);
+      }
+      
+      final jsonString = json.encode(current.map((e) => e.toJson()).toList());
+      await _instance.setString(_recentSearchesKey, jsonString);
+    } catch (e) {
+      debugPrint('❌ [Storage] 최근 검색어 저장 실패: $e');
+    }
   }
 
   // 💡 수석 개발자: 광주 전체 정류소 데이터 캐싱
