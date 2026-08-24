@@ -1,27 +1,16 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:kakao_map_plugin/kakao_map_plugin.dart';
 import '../models.dart';
+import 'api_endpoints.dart'; // 💡 추가
 
 class TmapService {
-  final String _appKey = (dotenv.env['TMAP_API_KEY'] ?? '').trim();
-
   Future<Map<String, dynamic>?> getTransitRoute(LatLng origin, LatLng dest) async {
-    if (_appKey.isEmpty) return null;
-
     try {
-      // 💡 [수정] 팀장님이 주신 최신 샘플 URL 및 바디 규격을 적용합니다.
-      final url = Uri.parse('https://apis.openapi.sk.com/transit/routes');
-      
       final response = await http.post(
-        url,
-        headers: {
-          'accept': 'application/json',
-          'appKey': _appKey,
-          'content-type': 'application/json',
-        },
+        TmapEndpoint.transitRoutes(),
+        headers: TmapEndpoint.headers(),
         body: json.encode({
           "startX": origin.longitude.toString(),
           "startY": origin.latitude.toString(),
@@ -44,32 +33,30 @@ class TmapService {
     return null;
   }
 
-  // 💡 [추가] Tmap 보행자 경로 API: 정확한 도보 시간 계산
+  // 💡 [수석 개발자] Tmap 보행자 경로 API: 문 앞부터 정류장까지 진짜 도보 시간 계산
   Future<int> getWalkingDuration(LatLng origin, LatLng dest) async {
-    if (_appKey.isEmpty) return 0;
     try {
-      final url = Uri.parse('https://apis.openapi.sk.com/tmap/routes/pedestrian?version=1');
       final response = await http.post(
-        url,
-        headers: {'appKey': _appKey, 'content-type': 'application/json'},
+        Uri.parse('https://apis.openapi.sk.com/tmap/routes/pedestrian?version=1'),
+        headers: TmapEndpoint.headers(),
         body: json.encode({
           "startX": origin.longitude.toString(),
           "startY": origin.latitude.toString(),
           "endX": dest.longitude.toString(),
           "endY": dest.latitude.toString(),
-          "startName": "출발지",
+          "startName": "내 위치",
           "endName": "정류장"
         }),
       );
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        final num? totalTime = data['features']?[0]?['properties']?['totalTime'];
-        if (totalTime != null) {
-          return (totalTime / 60).round();
-        }
+        final num totalTimeSeconds = data['features'][0]['properties']['totalTime'] ?? 0;
+        // 초 단위를 분 단위로 반환 (최소 1분 보장)
+        int minutes = (totalTimeSeconds / 60).ceil();
+        return minutes > 0 ? minutes : 1;
       }
     } catch (e) {
-      print('❌ [Tmap] 도보 시간 계산 실패: $e');
+      print('❌ [Tmap] 도보 시간 정밀 계산 실패: $e');
     }
     return 3; // 기본값 3분
   }
@@ -84,10 +71,63 @@ class TmapService {
     }
   }
 
+  // 💡 [수석 개발자] Tmap 보행자 경로 API: 좌표 리스트(Shape) 가져오기
+  Future<List<LatLng>> getWalkingPath(LatLng origin, LatLng dest) async {
+    try {
+      final response = await http.post(
+        Uri.parse('https://apis.openapi.sk.com/tmap/routes/pedestrian?version=1&format=json'),
+        headers: TmapEndpoint.headers(),
+        body: json.encode({
+          "startX": origin.longitude.toString(),
+          "startY": origin.latitude.toString(),
+          "endX": dest.longitude.toString(),
+          "endY": dest.latitude.toString(),
+          "startName": "출발지",
+          "endName": "도착지",
+          "searchOption": "0",
+          "reqCoordType": "WGS84GEO",
+          "resCoordType": "WGS84GEO",
+        }),
+      );
+      
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        List<LatLng> points = [];
+        final List features = data['features'] ?? [];
+        
+        for (var f in features) {
+          final geometry = f['geometry'];
+          if (geometry != null && geometry['type'] == 'LineString') {
+            final List coords = geometry['coordinates'];
+            for (var c in coords) {
+              // c[0]: lon, c[1]: lat
+              final lat = c[1].toDouble();
+              final lon = c[0].toDouble();
+              final newPoint = LatLng(lat, lon);
+              if (points.isEmpty || points.last != newPoint) {
+                points.add(newPoint);
+              }
+            }
+          }
+        }
+        
+        if (points.isNotEmpty) {
+          debugPrint('✅ [Tmap] 보행자 경로 획득: ${points.length}개 좌표');
+          return points;
+        }
+      } else {
+        debugPrint('❌ [Tmap] 도보 API 응답 실패: ${response.statusCode}');
+      }
+    } catch (e) {
+      debugPrint('❌ [Tmap] 도보 경로 예외: $e');
+    }
+    return [origin, dest]; 
+  }
+
   // 💡 특정 경로(itinerary)의 상세 지도 데이터만 추출하는 기능 분리
   Map<String, dynamic> parseItineraryPath(dynamic itinerary) {
     List<RouteSegment> segments = [];
-    List<LatLng> allBusStops = []; // 모든 버스 정류장 임시 보관
+    List<MapPin> stops = []; // 모든 버스 정류장 정밀 관리
     
     try {
       final List legs = itinerary['legs'];
@@ -95,6 +135,7 @@ class TmapService {
         final mode = leg['mode'];
         final List<LatLng> points = [];
         
+        // 1. 경로 선(Shape) 파싱
         if (leg['passShape'] != null && leg['passShape']['linestring'] != null) {
           final String linestring = leg['passShape']['linestring'];
           final parts = linestring.split(' ');
@@ -106,46 +147,59 @@ class TmapService {
           }
         }
 
+        if (points.isEmpty && leg['start'] != null && leg['end'] != null) {
+          points.add(LatLng(double.parse(leg['start']['lat'].toString()), double.parse(leg['start']['lon'].toString())));
+          points.add(LatLng(double.parse(leg['end']['lat'].toString()), double.parse(leg['end']['lon'].toString())));
+        }
+
+        // 2. 경유 정류장(passStopList) 파싱
         if (mode == 'BUS' || mode == 'SUBWAY') {
-          if (leg['start'] != null) {
-            allBusStops.add(LatLng(double.parse(leg['start']['lat'].toString()), double.parse(leg['start']['lon'].toString())));
-          }
-          if (leg['end'] != null) {
-            allBusStops.add(LatLng(double.parse(leg['end']['lat'].toString()), double.parse(leg['end']['lon'].toString())));
+          if (leg['passStopList'] != null && leg['passStopList']['stations'] != null) {
+            final List stations = leg['passStopList']['stations'];
+            for (int i = 0; i < stations.length; i++) {
+              final s = stations[i];
+              final lat = double.parse(s['lat'].toString());
+              final lon = double.parse(s['lon'].toString());
+              
+              String type = 'pass';
+              if (i == 0) type = 'boarding';
+              else if (i == stations.length - 1) type = 'alighting';
+
+              // 💡 중복 위치 처리 (환승 정류장 감지)
+              final existingIndex = stops.indexWhere((p) => (p.x - lat).abs() < 0.0001 && (p.y - lon).abs() < 0.0001);
+              if (existingIndex != -1) {
+                // 이미 해당 위치에 핀이 있다면 '환승'으로 업그레이드
+                stops[existingIndex] = MapPin(
+                  x: lat, y: lon,
+                  type: PinType.busStop,
+                  address: 'transfer',
+                  label: s['stationName'],
+                );
+              } else {
+                stops.add(MapPin(
+                  x: lat, y: lon,
+                  type: type == 'pass' ? PinType.passStop : PinType.busStop,
+                  address: type,
+                  label: s['stationName'],
+                ));
+              }
+            }
           }
         }
 
         segments.add(RouteSegment(
+          id: 'seg_${segments.length}_${mode}_${points.length}',
           points: points,
-          color: mode == 'WALK' ? const Color(0xFF10B981) : _parseColor(leg['routeColor']),
-          width: mode == 'WALK' ? 7.0 : 10.0,
+          color: mode == 'WALK' ? const Color(0xFF34D399) : _parseColor(leg['routeColor']),
+          width: mode == 'WALK' ? 5.0 : 10.0,
+          strokeStyle: mode == 'WALK' ? StrokeStyle.dot : StrokeStyle.solid,
         ));
       }
     } catch (e) {
       print('❌ [Tmap] 개별 경로 파싱 에러: $e');
     }
 
-    // 💡 [핵심 개선] 처음 탑승, 환승, 마지막 하차 정류장을 모두 추출
-    List<Map<String, dynamic>> filteredStops = [];
-    
-    if (allBusStops.isNotEmpty) {
-      // 1. 첫 승차
-      filteredStops.add({'latlng': allBusStops.first, 'type': 'boarding'});
-      
-      // 2. 환승 지점 검색 (중간에 있는 모든 정류소들)
-      if (allBusStops.length > 2) {
-        for (int i = 1; i < allBusStops.length - 1; i++) {
-          filteredStops.add({'latlng': allBusStops[i], 'type': 'transfer'});
-        }
-      }
-      
-      // 3. 최종 하차
-      if (allBusStops.length > 1) {
-        filteredStops.add({'latlng': allBusStops.last, 'type': 'alighting'});
-      }
-    }
-
-    return {'segments': segments, 'stops': filteredStops};
+    return {'segments': segments, 'stops': stops};
   }
 
   // Tmap 응답에서 모든 경로와 버스 정보를 추출합니다.
@@ -202,20 +256,48 @@ class TmapService {
         }
 
         List<String> busNames = [];
+        String? firstStopName;
+        LatLng? firstStopLatLng;
+        List<TransportLeg> routeLegs = []; // 💡 Atcha 포팅
+
         for (var leg in legs) {
+          final modeStr = leg['mode'];
+          final mode = modeStr == 'WALK' ? TransportMode.walk : 
+                       (modeStr == 'BUS' ? TransportMode.bus : TransportMode.subway);
+          
+          final int duration = ((leg['duration'] as num? ?? 0) / 60).round();
+          
+          routeLegs.add(TransportLeg(
+            mode: mode,
+            durationMinutes: duration,
+            routeName: leg['route'] ?? leg['lane']?[0]['route'],
+            startStopName: leg['start']?['name'],
+            endStopName: leg['end']?['name'],
+          ));
+
           if (leg['mode'] == 'BUS' || leg['mode'] == 'SUBWAY') {
             final name = leg['route'] ?? leg['lane']?[0]['route'] ?? '대중교통';
             busNames.add(name.toString().replaceAll('간선:', '').replaceAll('지선:', ''));
+            if (firstStopName == null && leg['start'] != null) {
+              firstStopName = leg['start']['name'];
+              firstStopLatLng = LatLng(
+                double.parse(leg['start']['lat'].toString()),
+                double.parse(leg['start']['lon'].toString()),
+              );
+            }
           }
         }
 
         busRoutes.add(BusRouteInfo(
           busName: busNames.isNotEmpty ? busNames.first : '도보',
-          busArrivalRemaining: 5,
+          busArrivalRemaining: -1, // 💡 기본값을 -1(정보 없음)로 변경
           walkTimeRemaining: firstWalkTime,
           travelDuration: totalTravelTime - firstWalkTime,
           totalDuration: totalTravelTime,
           routeDescription: busNames.isNotEmpty ? '${busNames.join(' → ')} 이용' : '전 구간 도보',
+          startStopName: firstStopName,
+          startStopLatLng: firstStopLatLng,
+          legs: routeLegs, // 💡 추가됨
         ));
       }
     } catch (e) {
