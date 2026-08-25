@@ -9,6 +9,7 @@ import 'package:flutter_compass/flutter_compass.dart';
 import 'package:provider/provider.dart';
 import '../app_provider.dart';
 import '../models.dart';
+import '../data/bus_schedules.dart'; // 💡 추가
 import '../widgets/app_card.dart';
 import '../widgets/app_empty_state.dart'; // 💡 추가
 
@@ -191,18 +192,16 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     // 5. 일반 경유 정류장 (줌 레벨에 따라 표시)
-    // 💡 [Request] 더 넓은 범위(축소된 상태)에서도 정류장 명칭이 보이도록 줌 레벨 임계값 조정
-    if (_currentZoomLevel < 7) { 
+    // 💡 [Request] 지도 5레벨 이하(더 확대된 상태)에서만 경유 정류장 이름이 보이도록 조정
+    if (_currentZoomLevel <= 5) { 
       final passStops = appProvider.pins.where((p) => p.type == PinType.passStop).toList();
       for (var pin in passStops) {
-        // 💡 줌 레벨에 따라 라벨 크기를 동적으로 조절하여 가독성 확보
-        bool isZoomedOut = _currentZoomLevel >= 5;
         overlays.add(_buildStopOverlay(
           pin, 
           pin.label ?? '정류장', 
           const Color(0xFF6B7280), 
           showLabel: true,
-          mini: isZoomedOut, // 💡 축소 시에는 미니 모드로 표시
+          mini: false, 
         ));
       }
     }
@@ -302,6 +301,134 @@ class _HomeScreenState extends State<HomeScreen> {
     mapController!.setLevel(optimalLevel);
   }
 
+  /// 💡 [Request] 버스 시간표 팝업 표시 (상/하행 통합 지원)
+  void _showBusScheduleDialog(List<BusSchedule> schedules) {
+    if (schedules.isEmpty) return;
+    final appProvider = context.read<AppProvider>();
+    final String routeName = schedules.first.routeName;
+    
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog( // 💡 dialogContext 분리
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        titlePadding: const EdgeInsets.fromLTRB(24, 24, 24, 8),
+        title: Row(
+          children: [
+            const Icon(Icons.access_time_filled, color: Color(0xFF2563EB)),
+            const SizedBox(width: 12),
+            Text('$routeName번 시간표', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
+          ],
+        ),
+        content: SizedBox(
+          width: MediaQuery.of(context).size.width * 0.9,
+          child: DefaultTabController(
+            length: 3,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const TabBar(
+                  tabs: [Tab(text: '평일'), Tab(text: '토요일'), Tab(text: '일요일')],
+                  labelColor: Color(0xFF2563EB),
+                  unselectedLabelColor: Color(0xFF9CA3AF),
+                  indicatorColor: Color(0xFF2563EB),
+                  indicatorWeight: 3,
+                  labelStyle: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  height: 400,
+                  child: TabBarView(
+                    children: [
+                      _buildScheduleComparisonView(dialogContext, schedules, 'weekday'), // 💡 dialogContext 전달
+                      _buildScheduleComparisonView(dialogContext, schedules, 'saturday'),
+                      _buildScheduleComparisonView(dialogContext, schedules, 'sunday'),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext), 
+            child: const Text('닫기', style: TextStyle(color: Color(0xFF6B7280), fontWeight: FontWeight.bold))
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildScheduleComparisonView(BuildContext dialogContext, List<BusSchedule> schedules, String type) {
+    final appProvider = context.read<AppProvider>(); // 💡 HomeScreen의 context 사용
+    return Column(
+      children: [
+        // 💡 [수석 개발자] 기점별 버튼 헤더
+        Row(
+          children: schedules.map((s) => Expanded(
+            child: GestureDetector(
+              onTap: () async {
+                final stopInfo = await appProvider.busApiService.getStationByNameOrCoords(name: s.startStation);
+                if (stopInfo != null) {
+                  if (mounted && Navigator.canPop(dialogContext)) {
+                    Navigator.pop(dialogContext); // 다이얼로그 닫기
+                  }
+                  // 💡 백업 후 노선 경로 표시 가동
+                  await appProvider.setHighlightMarker(
+                    stopInfo['lat'], stopInfo['lng'], s.startStation, busName: s.routeName
+                  );
+                  if (mapController != null) {
+                    mapController!.setCenter(LatLng(stopInfo['lat'], stopInfo['lng']));
+                    mapController!.setLevel(3);
+                  }
+                }
+              },
+              child: Container(
+                margin: const EdgeInsets.symmetric(horizontal: 4),
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEFF6FF),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFFBFDBFE)),
+                ),
+                child: Column(
+                  children: [
+                    const Icon(Icons.location_on, size: 14, color: Color(0xFF2563EB)),
+                    Text(s.startStation, 
+                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF1E40AF)),
+                      textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  ],
+                ),
+              ),
+            ),
+          )).toList(),
+        ),
+        const SizedBox(height: 12),
+        Expanded(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: schedules.map((s) {
+              List<String> times = type == 'weekday' ? s.weekday : (type == 'saturday' ? s.saturday : s.sunday);
+              return Expanded(
+                child: ListView.builder(
+                  itemCount: times.length,
+                  itemBuilder: (context, i) => Container(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      border: Border(bottom: BorderSide(color: Colors.grey[100]!))
+                    ),
+                    child: Text(times[i], style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: Color(0xFF374151))),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildServiceEndedWidget(String? customMessage) {
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 40),
@@ -323,6 +450,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildArrivalListTile(BusRouteInfo bus) {
+    final appProvider = context.read<AppProvider>();
     return ListTile(
       contentPadding: EdgeInsets.zero,
       leading: Container(
@@ -330,8 +458,25 @@ class _HomeScreenState extends State<HomeScreen> {
         decoration: BoxDecoration(color: const Color(0xFF1E3A8A), borderRadius: BorderRadius.circular(8)),
         child: Text(bus.busName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
       ),
-      title: Text('${bus.busArrivalRemaining}분 뒤 도착', style: const TextStyle(fontWeight: FontWeight.bold)),
-      trailing: Text(bus.statusText, style: TextStyle(color: bus.statusColor, fontWeight: FontWeight.bold)),
+      title: Text(
+        bus.busArrivalRemaining == -2 ? '운행 종료' : 
+        (bus.busArrivalRemaining == -1 ? '실시간 정보 없음' : '${bus.busArrivalRemaining}분 뒤 도착'), 
+        style: const TextStyle(fontWeight: FontWeight.bold)
+      ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // 💡 [Request] 모든 버스에 대해 시간표 버튼 노출
+          TextButton(
+            onPressed: () {
+              final schedules = appProvider.getBusSchedules(bus.busName);
+              if (schedules.isNotEmpty) _showBusScheduleDialog(schedules);
+            },
+            child: const Text('시간표', style: TextStyle(color: Color(0xFF2563EB), fontSize: 13)),
+          ),
+          Text(bus.statusText, style: TextStyle(color: bus.statusColor, fontWeight: FontWeight.bold)),
+        ],
+      ),
     );
   }
 
@@ -340,11 +485,12 @@ class _HomeScreenState extends State<HomeScreen> {
       padding: const EdgeInsets.all(18),
       borderColor: isSelected ? route.statusColor : const Color(0xFFE5E7EB),
       backgroundColor: isSelected ? route.statusColor.withOpacity(0.05) : Colors.white,
-      onTap: () { appProvider.selectRoute(index); },
+      onTap: () {
+        appProvider.selectRoute(index);
+      },
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 상단: 버스번호, 상태태그, 총 소요시간
           Row(
             children: [
               Text(
@@ -364,7 +510,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
               const Spacer(),
-              // 💡 Atcha 스타일: 알람 예약 버튼 추가
               IconButton(
                 onPressed: () => appProvider.registerDepartureAlarm(context, route),
                 icon: Icon(Icons.notifications_active_outlined, color: route.statusColor),
@@ -383,24 +528,34 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
           const SizedBox(height: 8),
-          // 💡 중단: 남은 도착 시간
-          Text(
-            route.busArrivalRemaining < 0 
-              ? '운행 정보 없음' 
-              : '${route.busArrivalRemaining}분 남음',
-            style: TextStyle(
-              fontSize: 20, 
-              fontWeight: FontWeight.w900, 
-              color: route.statusColor
-            ),
+          Row(
+            children: [
+              Text(
+                route.busArrivalRemaining == -2
+                    ? '운행 종료'
+                    : (route.busArrivalRemaining == -1 ? '실시간 정보 없음' : '${route.busArrivalRemaining}분 남음'),
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: route.statusColor),
+              ),
+              const SizedBox(width: 12),
+              TextButton.icon(
+                onPressed: () {
+                  final schedules = appProvider.getBusSchedules(route.busName);
+                  if (schedules.isNotEmpty) _showBusScheduleDialog(schedules);
+                },
+                icon: const Icon(Icons.table_chart_outlined, size: 16),
+                label: const Text('시간표 보기', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                style: TextButton.styleFrom(
+                  foregroundColor: const Color(0xFF2563EB),
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 4),
-          // 💡 하단: 도보 시간
           Text(
             '정류장까지 도보 ${route.walkTimeRemaining}분',
             style: const TextStyle(fontSize: 14, color: Color(0xFF6B7280), fontWeight: FontWeight.w500),
           ),
-          // 💡 노선 설명: 남는 공간에 자연스럽게 배치 (생략 없이 자동 줄바꿈)
           if (route.routeDescription.isNotEmpty) ...[
             const SizedBox(height: 12),
             Container(
@@ -413,12 +568,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               child: Text(
                 route.routeDescription,
-                style: const TextStyle(
-                  fontSize: 13, 
-                  color: Color(0xFF4B5563), 
-                  height: 1.4,
-                  fontWeight: FontWeight.w400
-                ),
+                style: const TextStyle(fontSize: 13, color: Color(0xFF4B5563), height: 1.4, fontWeight: FontWeight.w400),
               ),
             ),
           ],
@@ -428,6 +578,50 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildSearchHeader(AppProvider appProvider) {
+    // 💡 [Request] 시간표 기점 확인 모드일 때의 상단 헤더 UI
+    if (appProvider.state.activeScheduleBusName != null) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: const Color(0xFF2563EB), 
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 10)],
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.directions_bus, color: Colors.white, size: 22),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '${appProvider.state.activeScheduleBusName}번 노선 미리보기',
+                    style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  const Text(
+                    '마커가 찍힌 정류장은 해당 시간표의 기점입니다.',
+                    style: TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.close, color: Colors.white, size: 24),
+              onPressed: () {
+                // 💡 [수석 개발자] 미리보기 모드 즉시 종료 및 상태 복구
+                appProvider.clearHighlightMarker();
+                if (appProvider.state.barMode == WidgetBarMode.stopDetail) {
+                  appProvider.setBarMode(WidgetBarMode.main);
+                }
+                if (mounted) setState(() {});
+              },
+            ),
+          ],
+        ),
+      );
+    }
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
       decoration: BoxDecoration(

@@ -12,6 +12,18 @@ class BusApiEndpoint {
     return Uri.parse('$_baseUrl/arriveInfo?serviceKey=$_key&resultType=json&$param=$stopId');
   }
 
+  static Uri lineLocation(String lineId) {
+    return Uri.parse('$_baseUrl/lineArrivalInfo?serviceKey=$_key&resultType=json&LINE_ID=$lineId');
+  }
+
+  static Uri lineSearch(String lineName) {
+    return Uri.parse('$_baseUrl/lineInfo?serviceKey=$_key&resultType=json&LINE_NAME=$lineName');
+  }
+
+  static Uri linePath(String lineId) {
+    return Uri.parse('$_baseUrl/linePathInfo?serviceKey=$_key&resultType=json&LINE_ID=$lineId');
+  }
+
   static Uri stationInfo() {
     return Uri.parse('$_baseUrl/stationInfo?serviceKey=$_key&resultType=json&numOfRows=3000');
   }
@@ -27,4 +39,13 @@ class TmapEndpoint {
   };
 
   static Uri transitRoutes() => Uri.parse('https://apis.openapi.sk.com/transit/routes');
+
+  static Uri searchBusRoute(String busNumber) {
+    // 💡 Gwangju cityCode: 24
+    return Uri.parse('https://apis.openapi.sk.com/transit/bus/routes?busNumber=$busNumber&cityCode=24');
+  }
+
+  static Uri busRouteDetail(String routeId) {
+    return Uri.parse('https://apis.openapi.sk.com/transit/bus/routes/$routeId');
+  }
 }
