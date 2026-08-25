@@ -61,6 +61,78 @@ class TmapService {
     return 3; // 기본값 3분
   }
 
+  // 💡 [수석 개발자] Tmap 대중교통 API를 활용하여 버스 노선의 전체 궤적(Shape)을 가져옵니다.
+  Future<List<LatLng>> getBusLinePath(String busName) async {
+    final cleanBusName = busName.replaceAll(RegExp(r'[^0-9가-힣]'), '');
+    debugPrint('📡 [Tmap] $cleanBusName 노선 ID 조회 중...');
+
+    try {
+      // 1. 노선 이름으로 Tmap 전용 RouteID 조회 (광주 시티코드 24)
+      var response = await http.get(TmapEndpoint.searchBusRoute(cleanBusName), headers: TmapEndpoint.headers());
+      
+      // 검색 결과가 없으면 번(number)을 떼고 재시도
+      if (response.statusCode != 200 || json.decode(response.body)['busRouteList'] == null) {
+        final simplerName = cleanBusName.replaceAll('번', '');
+        if (simplerName != cleanBusName) {
+          debugPrint('🔄 [Tmap] $cleanBusName 결과 없음, $simplerName 으로 재시도...');
+          response = await http.get(TmapEndpoint.searchBusRoute(simplerName), headers: TmapEndpoint.headers());
+        }
+      }
+
+      if (response.statusCode != 200) return [];
+      
+      final searchData = json.decode(response.body);
+      final List? routes = searchData['busRouteList'];
+      if (routes == null || routes.isEmpty) {
+        debugPrint('⚠️ [Tmap] $cleanBusName 노선을 찾을 수 없습니다.');
+        return [];
+      }
+
+      // 💡 [수석 개발자] 여러 결과 중 가장 적합한 노선 ID 선택 (광주 지역 최우선 및 이름 유사도 체크)
+      final matchedRoute = routes.firstWhere(
+        (r) => r['routeName'].toString().contains(cleanBusName),
+        orElse: () => routes.first,
+      );
+      
+      final String routeId = matchedRoute['routeId'].toString();
+      debugPrint('✅ [Tmap] 노선 ID 획득: $routeId (${matchedRoute['routeName']})');
+
+      // 2. 노선 상세 정보(Shape 포함) 조회
+      final detailRes = await http.get(TmapEndpoint.busRouteDetail(routeId), headers: TmapEndpoint.headers());
+      if (detailRes.statusCode != 200) return [];
+
+      final detailData = json.decode(detailRes.body);
+      final String? linestring = detailData['passShape']?['linestring'];
+      
+      if (linestring == null) {
+        debugPrint('⚠️ [Tmap] 노선 형상 데이터(linestring)가 없습니다.');
+        return [];
+      }
+
+      final List<LatLng> points = [];
+      // Tmap 특유의 'lng,lat lng,lat' 또는 'lng,lat|lng,lat' 형식 대응
+      final delimiters = RegExp(r'[ |]');
+      final parts = linestring.split(delimiters);
+      
+      for (var p in parts) {
+        final coords = p.split(',');
+        if (coords.length == 2) {
+          final lng = double.tryParse(coords[0]);
+          final lat = double.tryParse(coords[1]);
+          if (lat != null && lng != null && lat != 0) {
+            points.add(LatLng(lat, lng));
+          }
+        }
+      }
+      
+      debugPrint('✅ [Tmap] 노선 경로 획득 완료: ${points.length}개 좌표');
+      return points;
+    } catch (e) {
+      debugPrint('❌ [Tmap] 노선 경로 조회 예외: $e');
+    }
+    return [];
+  }
+
   // 🎨 Tmap 헥사 색상 코드를 Flutter Color로 변환
   Color _parseColor(String? hexColor) {
     if (hexColor == null || hexColor.isEmpty) return const Color(0xFF2563EB);

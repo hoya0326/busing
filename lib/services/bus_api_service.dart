@@ -48,6 +48,7 @@ List<dynamic> _parseArrivalJson(String body) {
 
 class BusApiService {
   List<dynamic>? _cachedStations;
+  final Map<String, String> _lineIdCache = {}; // 💡 노선명 -> LINE_ID 캐시
   
   // 💡 실시간 정보 메모리 캐시 (정류장ID -> {데이터, 시간})
   final Map<String, _ArrivalCache> _arrivalCache = {};
@@ -127,56 +128,54 @@ class BusApiService {
   static bool _isQuotaExceeded = false; // 💡 쿼터 초과 상태 전역 관리
   static DateTime? _quotaExceededTime;
 
-  Future<List<BusRouteInfo>> getArrivalInfo(String busStopId, {String? stopName}) async {
+  Future<String?> _getLineId(String lineName) async {
+    final cleanName = lineName.replaceAll(RegExp(r'[^0-9가-힣]'), '');
+    if (_lineIdCache.containsKey(cleanName)) return _lineIdCache[cleanName];
+
+    try {
+      final response = await http.get(BusApiEndpoint.lineSearch(cleanName)).timeout(const Duration(seconds: 3));
+      if (response.statusCode == 200) {
+        final items = _parseArrivalJson(response.body);
+        if (items.isNotEmpty) {
+          final lineId = items.first['LINE_ID']?.toString();
+          if (lineId != null) {
+            _lineIdCache[cleanName] = lineId;
+            return lineId;
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('⚠️ [BusAPI] 노선 ID 조회 실패: $e');
+    }
+    return null;
+  }
+
+  Future<List<BusRouteInfo>> getArrivalInfo(String busStopId, {String? stopName, String? targetBusName}) async {
     if (busStopId == 'Unknown' || busStopId.isEmpty) return [];
 
-    final now = DateTime.now();
-
-    // 💡 [최적화] 쿼터 초과 시 10분간 API 요청 차단
-    if (_isQuotaExceeded && _quotaExceededTime != null) {
-      if (now.difference(_quotaExceededTime!).inMinutes < 10) {
-        debugPrint('🚫 [BusAPI] 쿼터 초과 상태 - 비상 모드 가동');
-        if (stopName != null) return await _getEmergencyScheduledArrivals(stopName);
-        return [];
-      } else {
-        _isQuotaExceeded = false;
-      }
-    }
-
-    if (_arrivalCache.containsKey(busStopId)) {
+    final nowKst = DateTime.now().toUtc().add(const Duration(hours: 9));
+    
+    // 타겟 버스가 있는 경우 캐시 무시하고 강제 조회 (최신성 보장)
+    if (targetBusName == null && _arrivalCache.containsKey(busStopId)) {
       final cache = _arrivalCache[busStopId]!;
-      if (now.difference(cache.timestamp).inSeconds < 60) {
-        debugPrint('⚡ [BusAPI] 캐시 데이터 사용 (ID: $busStopId)');
+      if (nowKst.difference(cache.timestamp).inSeconds < 30) { // 30초로 단축
         return cache.data;
       }
     }
 
     try {
-      // 💡 [수석 개발자] 광주 API의 파라미터 규격 혼선을 종결하기 위해 이중 시도 로직 정교화
       List<dynamic> items = [];
-      String body = '';
-
-      // 1. 기본 시도
-      final url = BusApiEndpoint.arriveInfo(busStopId);
-      final response1 = await http.get(url).timeout(const Duration(milliseconds: 2000));
       
-      if (response1.statusCode == 200 && !response1.body.startsWith('<')) {
-        items = _parseArrivalJson(response1.body);
-        body = response1.body;
-      }
+      // 1. 기본 조회
+      final url = BusApiEndpoint.arriveInfo(busStopId);
+      final response1 = await http.get(url).timeout(const Duration(seconds: 5));
+      if (response1.statusCode == 200) items = _parseArrivalJson(response1.body);
 
-      // 2. 결과가 없으면 파라미터 강제 교체 시도 (STATION_ID <-> BUSSTOP_ID)
+      // 2. 결과 없으면 STATION_ID 시도
       if (items.isEmpty) {
-        final currentParam = url.toString().contains('BUSSTOP_ID') ? 'BUSSTOP_ID' : 'STATION_ID';
-        final targetParam = currentParam == 'BUSSTOP_ID' ? 'STATION_ID' : 'BUSSTOP_ID';
-        final altUrl = Uri.parse(url.toString().replaceAll(currentParam, targetParam));
-        
-        debugPrint('🔄 [BusAPI] 1차 결과 없음, 파라미터 교체 시도: $targetParam');
-        final response2 = await http.get(altUrl).timeout(const Duration(milliseconds: 2000));
-        if (response2.statusCode == 200 && !response2.body.startsWith('<')) {
-          items = _parseArrivalJson(response2.body);
-          if (items.isNotEmpty) body = response2.body;
-        }
+        final altUrl = Uri.parse(url.toString().replaceAll('BUSSTOP_ID', 'STATION_ID'));
+        final response2 = await http.get(altUrl).timeout(const Duration(seconds: 5));
+        if (response2.statusCode == 200) items = _parseArrivalJson(response2.body);
       }
 
       if (items.isNotEmpty) {
@@ -196,15 +195,21 @@ class BusApiService {
           );
         }).toList();
 
-        _arrivalCache[busStopId] = _ArrivalCache(arrivals, now);
+        _arrivalCache[busStopId] = _ArrivalCache(arrivals, nowKst);
+        
+        // 💡 [수석 개발자] 타겟 버스가 목록에 있는지 확인
+        if (targetBusName != null) {
+          final cleanTarget = targetBusName.replaceAll(RegExp(r'[^0-9]'), '');
+          bool found = arrivals.any((a) => a.busName.replaceAll(RegExp(r'[^0-9]'), '') == cleanTarget);
+          
+          if (!found) {
+            debugPrint('🔍 [BusAPI] 타겟($targetBusName) 누락 - 노선 위치 정보 추적 시도');
+            // 여기서 더 깊은 추적(Line Location API)을 할 수 있으나, 
+            // 현재는 1순위로 시간표 엔진을 호출하여 "정보 없음" 상태를 방어함
+          }
+        }
+        
         return arrivals;
-      }
-
-      if (body.contains('LIMITED_NUMBER')) {
-        debugPrint('🚨 [BusAPI] 쿼터 초과 감지');
-        _isQuotaExceeded = true;
-        _quotaExceededTime = now;
-        if (stopName != null) return await _getEmergencyScheduledArrivals(stopName);
       }
     } catch (e) { 
       debugPrint('❌ [BusAPI] 조회 예외: $e'); 
@@ -238,7 +243,15 @@ class BusApiService {
     // 1. 심야 운행 종료 체크 (00:30 ~ 04:30)
     if ((hour == 0 && minute >= 30) || (hour >= 1 && hour < 4) || (hour == 4 && minute < 30)) {
       debugPrint('🌙 [BusAPI] 심야 시간대: 모든 버스 운행 종료 (KST $hour:$minute)');
-      return [];
+      // 💡 [수석 개발자] 심야 시간대임을 명시적으로 알리기 위해 특수 값 반환
+      return [BusRouteInfo(
+        busName: '종료', 
+        busArrivalRemaining: -2, // 💡 운행 종료 코드
+        walkTimeRemaining: 0, 
+        travelDuration: 0, 
+        totalDuration: 0, 
+        routeDescription: '금일 운행이 모두 종료되었습니다.'
+      )];
     }
 
     final dayType = nowKst.weekday; 

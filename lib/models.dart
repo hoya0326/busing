@@ -199,7 +199,8 @@ enum RouteStatus {
   safe,    // 🟢 안정: 여유롭게 탑승 가능
   tight,   // 🟡 촉박: 서둘러야 탑승 가능
   hard,    // 🔴 어려움: 현재 버스 탑승 불가, 다음 버스 권장
-  ended    // ⚪ 종료: 금일 운행 종료 또는 정보 없음 (Atcha 포팅)
+  noInfo,  // ⚪ 정보 없음: 실시간 정보를 불러오지 못함 (Atcha 포팅)
+  ended    // 🌙 종료: 금일 운행 종료 (KST 기준 심야)
 }
 
 // 버스 노선별 상세 분석 정보와 추천 순위를 결정하는 데이터 구조입니다.
@@ -266,10 +267,17 @@ class BusRouteInfo {
   // 💡 알고리즘 연산 결과 업데이트 (Atcha 벤치마킹)
   void updateCalculatedFields() {
     // 0. 운행 종료 또는 정보 없음 처리
-    if (busArrivalRemaining < 0) {
+    if (busArrivalRemaining == -1) {
+      syncMargin = -999;
+      status = RouteStatus.noInfo;
+      totalETA = totalDuration; 
+      return;
+    }
+
+    if (busArrivalRemaining == -2) { // 💡 명시적인 운행 종료
       syncMargin = -999;
       status = RouteStatus.ended;
-      totalETA = totalDuration; 
+      totalETA = totalDuration;
       return;
     }
 
@@ -300,7 +308,8 @@ class BusRouteInfo {
       case RouteStatus.safe: return const Color(0xFF10B981);
       case RouteStatus.tight: return const Color(0xFFF59E0B);
       case RouteStatus.hard: return const Color(0xFFDC2626);
-      case RouteStatus.ended: return const Color(0xFF9CA3AF); 
+      case RouteStatus.noInfo: return const Color(0xFF9CA3AF); 
+      case RouteStatus.ended: return const Color(0xFF1F2937); // 아주 어두운 색
     }
   }
 
@@ -310,6 +319,7 @@ class BusRouteInfo {
       case RouteStatus.safe: return '안정 탑승';
       case RouteStatus.tight: return '서두르세요';
       case RouteStatus.hard: return '탑승 어려움';
+      case RouteStatus.noInfo: return '정보 없음';
       case RouteStatus.ended: return '운행 종료';
     }
   }
