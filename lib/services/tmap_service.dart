@@ -20,15 +20,16 @@ class TmapService {
           "lang": 0,
           "format": "json"
         }),
-      );
+      ).timeout(const Duration(seconds: 10)); // 💡 타임아웃 추가
 
       if (response.statusCode == 200) {
         return json.decode(response.body);
       } else {
-        print('❌ [Tmap] API 에러 (${response.statusCode}): ${response.body}');
+        debugPrint('❌ [Tmap] API 에러 (${response.statusCode}): ${response.body}');
+        // 💡 [수석 개발자] 에러 원인 추적을 위해 구체적 메시지 반환 유도 가능
       }
     } catch (e) {
-      print('❌ [Tmap] 통신 에러: $e');
+      debugPrint('❌ [Tmap] 통신 에러: $e');
     }
     return null;
   }
@@ -63,74 +64,87 @@ class TmapService {
 
   // 💡 [수석 개발자] Tmap 대중교통 API를 활용하여 버스 노선의 전체 궤적(Shape)을 가져옵니다.
   Future<List<LatLng>> getBusLinePath(String busName) async {
+    // ... 기존 코드 유지 (내부 로직은 getBusLineDetail로 통합 가능)
+    final detail = await getBusLineDetail(busName);
+    return detail['path'] as List<LatLng>? ?? [];
+  }
+
+  // 💡 [New] 버스 노선 상세 정보 (궤적 + 정류장 목록) 통합 조회
+  Future<Map<String, dynamic>> getBusLineDetail(String busName) async {
     final cleanBusName = busName.replaceAll(RegExp(r'[^0-9가-힣]'), '');
-    debugPrint('📡 [Tmap] $cleanBusName 노선 ID 조회 중...');
+    debugPrint('📡 [Tmap] $cleanBusName 노선 상세 조회 중...');
 
     try {
-      // 1. 노선 이름으로 Tmap 전용 RouteID 조회 (광주 시티코드 24)
-      var response = await http.get(TmapEndpoint.searchBusRoute(cleanBusName), headers: TmapEndpoint.headers());
+      // 1. 노선 이름으로 Tmap 전용 RouteID 조회
+      var searchRes = await http.get(TmapEndpoint.searchBusRoute(cleanBusName), headers: TmapEndpoint.headers());
       
-      // 검색 결과가 없으면 번(number)을 떼고 재시도
-      if (response.statusCode != 200 || json.decode(response.body)['busRouteList'] == null) {
+      if (searchRes.statusCode != 200 || json.decode(searchRes.body)['busRouteList'] == null) {
         final simplerName = cleanBusName.replaceAll('번', '');
         if (simplerName != cleanBusName) {
-          debugPrint('🔄 [Tmap] $cleanBusName 결과 없음, $simplerName 으로 재시도...');
-          response = await http.get(TmapEndpoint.searchBusRoute(simplerName), headers: TmapEndpoint.headers());
+          searchRes = await http.get(TmapEndpoint.searchBusRoute(simplerName), headers: TmapEndpoint.headers());
         }
       }
 
-      if (response.statusCode != 200) return [];
-      
-      final searchData = json.decode(response.body);
+      if (searchRes.statusCode != 200) return {};
+      final searchData = json.decode(searchRes.body);
       final List? routes = searchData['busRouteList'];
-      if (routes == null || routes.isEmpty) {
-        debugPrint('⚠️ [Tmap] $cleanBusName 노선을 찾을 수 없습니다.');
-        return [];
-      }
+      if (routes == null || routes.isEmpty) return {};
 
-      // 💡 [수석 개발자] 여러 결과 중 가장 적합한 노선 ID 선택 (광주 지역 최우선 및 이름 유사도 체크)
       final matchedRoute = routes.firstWhere(
         (r) => r['routeName'].toString().contains(cleanBusName),
         orElse: () => routes.first,
       );
-      
       final String routeId = matchedRoute['routeId'].toString();
-      debugPrint('✅ [Tmap] 노선 ID 획득: $routeId (${matchedRoute['routeName']})');
 
-      // 2. 노선 상세 정보(Shape 포함) 조회
+      // 2. 노선 상세 정보 조회
       final detailRes = await http.get(TmapEndpoint.busRouteDetail(routeId), headers: TmapEndpoint.headers());
-      if (detailRes.statusCode != 200) return [];
+      if (detailRes.statusCode != 200) return {};
 
       final detailData = json.decode(detailRes.body);
+      
+      // 3. 궤적(Shape) 파싱
       final String? linestring = detailData['passShape']?['linestring'];
-      
-      if (linestring == null) {
-        debugPrint('⚠️ [Tmap] 노선 형상 데이터(linestring)가 없습니다.');
-        return [];
-      }
-
-      final List<LatLng> points = [];
-      // Tmap 특유의 'lng,lat lng,lat' 또는 'lng,lat|lng,lat' 형식 대응
-      final delimiters = RegExp(r'[ |]');
-      final parts = linestring.split(delimiters);
-      
-      for (var p in parts) {
-        final coords = p.split(',');
-        if (coords.length == 2) {
-          final lng = double.tryParse(coords[0]);
-          final lat = double.tryParse(coords[1]);
-          if (lat != null && lng != null && lat != 0) {
-            points.add(LatLng(lat, lng));
+      List<LatLng> pathPoints = [];
+      if (linestring != null) {
+        final delimiters = RegExp(r'[ |]');
+        final parts = linestring.split(delimiters);
+        for (var p in parts) {
+          final coords = p.split(',');
+          if (coords.length == 2) {
+            final lng = double.tryParse(coords[0]);
+            final lat = double.tryParse(coords[1]);
+            if (lat != null && lng != null && lat != 0) pathPoints.add(LatLng(lat, lng));
           }
         }
       }
-      
-      debugPrint('✅ [Tmap] 노선 경로 획득 완료: ${points.length}개 좌표');
-      return points;
+
+      // 4. 정류장 목록 파싱
+      final List? stationList = detailData['stationList'];
+      List<BusLineStation> stations = [];
+      if (stationList != null) {
+        stations = stationList.map((s) {
+          return BusLineStation(
+            stationName: s['stationName'],
+            stationId: s['stationId'].toString(),
+            arsId: s['arsId']?.toString(),
+            lat: double.parse(s['lat'].toString()),
+            lng: double.parse(s['lon'].toString()),
+            // 💡 Tmap API에서 제공하는 첫차/막차 정보 활용 (없으면 기본값)
+            // 실제 API 필드명에 맞춰 보정 필요 (보통 stationList 내부엔 없음, 노선 기본 정보에 있음)
+          );
+        }).toList();
+      }
+
+      return {
+        'path': pathPoints,
+        'stations': stations,
+        'routeId': routeId,
+        'routeName': matchedRoute['routeName'],
+      };
     } catch (e) {
-      debugPrint('❌ [Tmap] 노선 경로 조회 예외: $e');
+      debugPrint('❌ [Tmap] 노선 상세 조회 예외: $e');
     }
-    return [];
+    return {};
   }
 
   // 🎨 Tmap 헥사 색상 코드를 Flutter Color로 변환
@@ -296,11 +310,17 @@ class TmapService {
       }
 
       if (data['metaData'] == null || data['metaData']['plan'] == null) {
+        debugPrint('⚠️ [Tmap] metaData 또는 plan 데이터가 없습니다.');
         return {'errorMessage': errorMessage ?? '경로를 찾을 수 없습니다.'};
       }
       
       final plan = data['metaData']['plan'];
-      final itineraries = plan['itineraries'] as List;
+      final itineraries = plan['itineraries'] as List?;
+
+      if (itineraries == null || itineraries.isEmpty) {
+        debugPrint('⚠️ [Tmap] 검색된 경로(itineraries)가 없습니다.');
+        return {'errorMessage': errorMessage ?? '이용 가능한 대중교통 경로가 없습니다.'};
+      }
 
       itineraries.sort((a, b) {
         final aTime = (a['totalTime'] ?? 999999) as num;

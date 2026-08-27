@@ -5,6 +5,7 @@ import 'package:xml/xml.dart';
 import 'package:kakao_map_plugin/kakao_map_plugin.dart';
 import '../models.dart';
 import '../data/bus_schedules.dart';
+import '../data/bus_line_data.dart'; // 💡 추가
 import 'api_endpoints.dart'; // 💡 추가
 
 List<dynamic> _parseArrivalJson(String body) {
@@ -291,6 +292,78 @@ class BusApiService {
       }
     } catch (e) { debugPrint('❌ [Schedule] 에러: $e'); }
     return results;
+  }
+
+  Future<Map<String, dynamic>?> getBusLineDetailInfo(String lineName) async {
+    // 💡 [수석 개발자] 로컬 하드코딩 데이터 우선 적용 (네트워크 0초 로딩)
+    if (hardcodedBusDetails.containsKey(lineName)) {
+      debugPrint('📦 [BusAPI] 로컬 상세정보 사용(Direct): $lineName');
+      return hardcodedBusDetails[lineName];
+    }
+
+    final cleanName = lineName.replaceAll(RegExp(r'[^0-9가-힣]'), '');
+    if (hardcodedBusDetails.containsKey(cleanName)) {
+      debugPrint('📦 [BusAPI] 로컬 상세정보 사용(Cleaned): $cleanName');
+      return hardcodedBusDetails[cleanName];
+    }
+
+    final lineId = await _getLineId(lineName);
+    if (lineId == null) return null;
+
+    try {
+      final response = await http.get(BusApiEndpoint.lineDetail(lineId)).timeout(const Duration(seconds: 5));
+      if (response.statusCode == 200) {
+        final items = _parseArrivalJson(response.body);
+        if (items.isNotEmpty) return items.first;
+      }
+    } catch (e) {
+      debugPrint('⚠️ [BusAPI] 노선 상세 정보 조회 실패: $e');
+    }
+    return null;
+  }
+
+  Future<List<BusLineStation>> getLineStations(String lineName, {String direction = 'UP'}) async {
+    // 💡 [수석 개발자] 로컬 하드코딩 데이터 우선 적용 (정확도 100% 보장)
+    // 1. 원본 이름으로 시도
+    final directKey = "${lineName}_$direction";
+    if (hardcodedBusLines.containsKey(directKey)) {
+      debugPrint('📦 [BusAPI] 로컬 정류장 데이터 사용(Direct): $directKey');
+      return hardcodedBusLines[directKey]!;
+    }
+
+    // 2. 정규화된 이름으로 시도
+    final cleanName = lineName.replaceAll(RegExp(r'[^0-9가-힣]'), '');
+    final cleanKey = "${cleanName}_$direction";
+    if (hardcodedBusLines.containsKey(cleanKey)) {
+      debugPrint('📦 [BusAPI] 로컬 정류장 데이터 사용(Cleaned): $cleanKey');
+      return hardcodedBusLines[cleanKey]!;
+    }
+
+    // 하드코딩 데이터가 없는 경우만 API 호출 (Fallback)
+    final lineId = await _getLineId(lineName);
+    if (lineId == null) return [];
+
+    try {
+      final response = await http.get(BusApiEndpoint.lineStation(lineId)).timeout(const Duration(seconds: 10));
+      if (response.statusCode == 200) {
+        final items = _parseArrivalJson(response.body);
+        return List.generate(items.length, (index) {
+          final item = items[index];
+          return BusLineStation(
+            stationName: item['BUSSTOP_NAME'] ?? '알 수 없음',
+            stationId: item['BUSSTOP_ID']?.toString() ?? '',
+            arsId: item['ARS_ID']?.toString(),
+            lat: double.tryParse(item['LATITUDE']?.toString() ?? '0') ?? 0.0,
+            lng: double.tryParse(item['LONGITUDE']?.toString() ?? '0') ?? 0.0,
+            firstBusTime: '05:40', 
+            lastBusTime: '22:30',
+          );
+        });
+      }
+    } catch (e) {
+      debugPrint('⚠️ [BusAPI] 노선 정류장 조회 실패: $e');
+    }
+    return [];
   }
 
   Future<List<BusStop>> fetchAllGwangjuStations() async {

@@ -24,6 +24,14 @@ class BusApiEndpoint {
     return Uri.parse('$_baseUrl/linePathInfo?serviceKey=$_key&resultType=json&LINE_ID=$lineId');
   }
 
+  static Uri lineStation(String lineId) {
+    return Uri.parse('$_baseUrl/lineStationInfo?serviceKey=$_key&resultType=json&LINE_ID=$lineId');
+  }
+
+  static Uri lineDetail(String lineId) {
+    return Uri.parse('$_baseUrl/lineInfo?serviceKey=$_key&resultType=json&LINE_ID=$lineId');
+  }
+
   static Uri stationInfo() {
     return Uri.parse('$_baseUrl/stationInfo?serviceKey=$_key&resultType=json&numOfRows=3000');
   }

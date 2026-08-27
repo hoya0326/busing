@@ -108,9 +108,7 @@ class _HomeScreenState extends State<HomeScreen> {
       context.read<AppProvider>().updateDefaultPlacesWithLocation(lat, lng);
     }
 
-    if (moveCamera && mapController != null) {
-      mapController!.setCenter(newLatLng);
-    }
+    // 💡 지도 자동 이동 제거
   }
 
   List<CustomOverlay> _generateOverlays(AppProvider appProvider) {
@@ -273,160 +271,11 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _moveToMyLocation() async {
-    if (_currentPosition != null && mapController != null) {
-      mapController!.setCenter(_currentPosition!);
-    }
+    // 💡 지도 이동 제거
   }
 
   void _fitRouteBounds(LatLng p1, LatLng p2) {
-    if (mapController == null) return;
-    final centerLat = (p1.latitude + p2.latitude) / 2;
-    final centerLng = (p1.longitude + p2.longitude) / 2;
-    final latDiff = (p1.latitude - p2.latitude).abs();
-    final lngDiff = (p1.longitude - p2.longitude).abs();
-    final maxDiff = latDiff > lngDiff ? latDiff : lngDiff;
-
-    int optimalLevel = 3;
-    if (maxDiff > 0.1) optimalLevel = 8;
-    else if (maxDiff > 0.05) optimalLevel = 7;
-    else if (maxDiff > 0.02) optimalLevel = 6;
-    else if (maxDiff > 0.01) optimalLevel = 5;
-    else if (maxDiff > 0.005) optimalLevel = 4;
-    else optimalLevel = 3;
-
-    setState(() {
-      _currentZoomLevel = optimalLevel;
-    });
-    mapController!.setCenter(LatLng(centerLat, centerLng));
-    mapController!.setLevel(optimalLevel);
-  }
-
-  /// 💡 [Request] 버스 시간표 팝업 표시 (상/하행 통합 지원)
-  void _showBusScheduleDialog(List<BusSchedule> schedules) {
-    if (schedules.isEmpty) return;
-    final appProvider = context.read<AppProvider>();
-    final String routeName = schedules.first.routeName;
-    
-    showDialog(
-      context: context,
-      builder: (dialogContext) => AlertDialog( // 💡 dialogContext 분리
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        titlePadding: const EdgeInsets.fromLTRB(24, 24, 24, 8),
-        title: Row(
-          children: [
-            const Icon(Icons.access_time_filled, color: Color(0xFF2563EB)),
-            const SizedBox(width: 12),
-            Text('$routeName번 시간표', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
-          ],
-        ),
-        content: SizedBox(
-          width: MediaQuery.of(context).size.width * 0.9,
-          child: DefaultTabController(
-            length: 3,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const TabBar(
-                  tabs: [Tab(text: '평일'), Tab(text: '토요일'), Tab(text: '일요일')],
-                  labelColor: Color(0xFF2563EB),
-                  unselectedLabelColor: Color(0xFF9CA3AF),
-                  indicatorColor: Color(0xFF2563EB),
-                  indicatorWeight: 3,
-                  labelStyle: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-                ),
-                const SizedBox(height: 16),
-                SizedBox(
-                  height: 400,
-                  child: TabBarView(
-                    children: [
-                      _buildScheduleComparisonView(dialogContext, schedules, 'weekday'), // 💡 dialogContext 전달
-                      _buildScheduleComparisonView(dialogContext, schedules, 'saturday'),
-                      _buildScheduleComparisonView(dialogContext, schedules, 'sunday'),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext), 
-            child: const Text('닫기', style: TextStyle(color: Color(0xFF6B7280), fontWeight: FontWeight.bold))
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildScheduleComparisonView(BuildContext dialogContext, List<BusSchedule> schedules, String type) {
-    final appProvider = context.read<AppProvider>(); // 💡 HomeScreen의 context 사용
-    return Column(
-      children: [
-        // 💡 [수석 개발자] 기점별 버튼 헤더
-        Row(
-          children: schedules.map((s) => Expanded(
-            child: GestureDetector(
-              onTap: () async {
-                final stopInfo = await appProvider.busApiService.getStationByNameOrCoords(name: s.startStation);
-                if (stopInfo != null) {
-                  if (mounted && Navigator.canPop(dialogContext)) {
-                    Navigator.pop(dialogContext); // 다이얼로그 닫기
-                  }
-                  // 💡 백업 후 노선 경로 표시 가동
-                  await appProvider.setHighlightMarker(
-                    stopInfo['lat'], stopInfo['lng'], s.startStation, busName: s.routeName
-                  );
-                  if (mapController != null) {
-                    mapController!.setCenter(LatLng(stopInfo['lat'], stopInfo['lng']));
-                    mapController!.setLevel(3);
-                  }
-                }
-              },
-              child: Container(
-                margin: const EdgeInsets.symmetric(horizontal: 4),
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFEFF6FF),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: const Color(0xFFBFDBFE)),
-                ),
-                child: Column(
-                  children: [
-                    const Icon(Icons.location_on, size: 14, color: Color(0xFF2563EB)),
-                    Text(s.startStation, 
-                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF1E40AF)),
-                      textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis),
-                  ],
-                ),
-              ),
-            ),
-          )).toList(),
-        ),
-        const SizedBox(height: 12),
-        Expanded(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: schedules.map((s) {
-              List<String> times = type == 'weekday' ? s.weekday : (type == 'saturday' ? s.saturday : s.sunday);
-              return Expanded(
-                child: ListView.builder(
-                  itemCount: times.length,
-                  itemBuilder: (context, i) => Container(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      border: Border(bottom: BorderSide(color: Colors.grey[100]!))
-                    ),
-                    child: Text(times[i], style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: Color(0xFF374151))),
-                  ),
-                ),
-              );
-            }).toList(),
-          ),
-        ),
-      ],
-    );
+    // 💡 지도 이동 제거
   }
 
   Widget _buildServiceEndedWidget(String? customMessage) {
@@ -466,16 +315,283 @@ class _HomeScreenState extends State<HomeScreen> {
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // 💡 [Request] 모든 버스에 대해 시간표 버튼 노출
+          // 💡 [Request] "시간표" -> "정보" 버튼으로 변경 및 하단 시트 전환
           TextButton(
             onPressed: () {
-              final schedules = appProvider.getBusSchedules(bus.busName);
-              if (schedules.isNotEmpty) _showBusScheduleDialog(schedules);
+              appProvider.openBusLineInfo(bus.busName);
             },
-            child: const Text('시간표', style: TextStyle(color: Color(0xFF2563EB), fontSize: 13)),
+            child: const Text('정보', style: TextStyle(color: Color(0xFF2563EB), fontSize: 13)),
           ),
           Text(bus.statusText, style: TextStyle(color: bus.statusColor, fontWeight: FontWeight.bold)),
         ],
+      ),
+    );
+  }
+
+
+  /// 💡 [New Request] 버스 정류장 목록 뷰 (2번 사진)
+  Widget _buildBusStopListView(AppProvider appProvider) {
+    final stations = appProvider.state.activeLineStations;
+    final busName = appProvider.state.activeBusName ?? '';
+    final details = appProvider.state.activeBusDetails;
+    final direction = appProvider.state.activeDirection;
+    final dirTitle = direction == 'UP' 
+        ? (details?['DIR_UP_NAME'] ?? '상행') 
+        : (details?['DIR_DOWN_NAME'] ?? '하행');
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 상단 헤더 (이미지 재현)
+        Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(color: const Color(0xFF2563EB), borderRadius: BorderRadius.circular(4)),
+              child: const Text('간선', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+            ),
+            const SizedBox(width: 8),
+            Text(busName, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
+            const Spacer(),
+            IconButton(
+              icon: const Icon(Icons.close, size: 24, color: Colors.black54),
+              onPressed: () => appProvider.setBarMode(WidgetBarMode.main),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        
+        // 방향 전환 버튼 및 현재 방향 표시
+        GestureDetector(
+          onTap: () => appProvider.switchBusDirection(),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF3F4F6),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('$dirTitle 방면', style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF374151))),
+                const SizedBox(width: 6),
+                const Icon(Icons.swap_vert, size: 16, color: Color(0xFF6B7280)),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 15),
+        
+        if (stations.isEmpty)
+          const Center(child: Padding(padding: EdgeInsets.all(40), child: CircularProgressIndicator()))
+        else
+          ...List.generate(stations.length, (index) {
+            final s = stations[index];
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // 타임라인 선 (이미지 스타일 재현)
+                SizedBox(
+                  width: 40,
+                  child: Column(
+                    children: [
+                      Container(width: 4, height: 20, color: index == 0 ? Colors.transparent : const Color(0xFFFBBF24)),
+                      Container(
+                        width: 12, height: 12,
+                        decoration: BoxDecoration(
+                          color: Colors.white, shape: BoxShape.circle,
+                          border: Border.all(color: const Color(0xFFFBBF24), width: 3),
+                        ),
+                      ),
+                      Container(width: 4, height: 20, color: index == stations.length - 1 ? Colors.transparent : const Color(0xFFFBBF24)),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const SizedBox(height: 14),
+                      Text(s.stationName, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Color(0xFF111827))),
+                      const SizedBox(height: 2),
+                      Text('${s.firstBusTime} - ${s.lastBusTime}', style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280), fontWeight: FontWeight.w500)),
+                      const SizedBox(height: 14),
+                      if (index != stations.length - 1) const Divider(height: 1, color: Color(0xFFF3F4F6)),
+                    ],
+                  ),
+                ),
+              ],
+            );
+          }),
+          
+        const SizedBox(height: 30),
+        // 하단 고정 버튼
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            _buildModeActionBtn(Icons.access_time, '시간표', () => appProvider.setBarMode(WidgetBarMode.lineSchedule)),
+            _buildModeActionBtn(Icons.info_outline, '노선정보', () => appProvider.setBarMode(WidgetBarMode.lineDetails)),
+          ],
+        ),
+      ],
+    );
+  }
+
+  /// 💡 [New Request] 두 종점 방향 통합 시간표 뷰 (3번 사진 스타일)
+  Widget _buildDualScheduleView(AppProvider appProvider) {
+    final busName = appProvider.state.activeBusName ?? '';
+    final schedules = appProvider.getBusSchedules(busName);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            IconButton(
+              icon: const Icon(Icons.arrow_back_ios_new, size: 20),
+              onPressed: () => appProvider.setBarMode(WidgetBarMode.lineInfo),
+            ),
+            Text('$busName 배차시간표', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        const SizedBox(height: 10),
+        DefaultTabController(
+          length: 2,
+          child: Column(
+            children: [
+              const TabBar(
+                tabs: [Tab(text: '평일'), Tab(text: '주말')],
+                labelColor: Color(0xFF2563EB),
+                indicatorColor: Color(0xFF2563EB),
+              ),
+              const SizedBox(height: 15),
+              SizedBox(
+                height: 400,
+                child: TabBarView(
+                  children: [
+                    _buildDirectionalScheduleGrid(schedules, 'weekday'),
+                    _buildDirectionalScheduleGrid(schedules, 'weekend'),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDirectionalScheduleGrid(List<BusSchedule> schedules, String type) {
+    if (schedules.isEmpty) return const Center(child: Text('데이터가 없습니다.'));
+    
+    return Column(
+      children: [
+        // 종점 헤더
+        Row(
+          children: schedules.map((s) => Expanded(
+            child: Container(
+              padding: const EdgeInsets.all(8),
+              margin: const EdgeInsets.symmetric(horizontal: 2),
+              decoration: const BoxDecoration(color: Color(0xFF00C7FF)), // 이미지의 하늘색
+              child: Text(s.startStation, 
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11),
+                textAlign: TextAlign.center, overflow: TextOverflow.ellipsis),
+            ),
+          )).toList(),
+        ),
+        Expanded(
+          child: Row(
+            children: schedules.map((s) {
+              final times = type == 'weekday' ? s.weekday : s.saturday;
+              return Expanded(
+                child: ListView.builder(
+                  itemCount: times.length,
+                  itemBuilder: (context, i) => Container(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.grey[100]!))),
+                    child: Text(times[i], textAlign: TextAlign.center, style: const TextStyle(fontSize: 14)),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 💡 [New Request] 노선 상세 정보 뷰 (4번 사진 스타일)
+  Widget _buildLineDetailInfoView(AppProvider appProvider) {
+    final details = appProvider.state.activeBusDetails;
+    final busName = appProvider.state.activeBusName ?? '';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            IconButton(
+              icon: const Icon(Icons.arrow_back_ios_new, size: 20),
+              onPressed: () => appProvider.setBarMode(WidgetBarMode.lineInfo),
+            ),
+            const Text('노선정보', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        const SizedBox(height: 20),
+        
+        // 초정밀 안내 박스
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(color: const Color(0xFFF9FAFB), borderRadius: BorderRadius.circular(12)),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: const [
+              Text('초정밀 버스 위치정보 제공 노선', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+              SizedBox(height: 6),
+              Text('10cm 단위의 버스 위치정보를 1초 간격으로 갱신하는 리얼타임 서비스입니다.', 
+                style: TextStyle(color: Color(0xFF6B7280), fontSize: 13, height: 1.5)),
+            ],
+          ),
+        ),
+        
+        const SizedBox(height: 10),
+        _buildInfoRow('운행지역', '${details?['DIR_UP_NAME'] ?? "광주"} ↔ ${details?['DIR_DOWN_NAME'] ?? "광주"}\n전남광주'),
+        _buildInfoRow('운행시간', '기점 ${details?['FIRST_RUN'] ?? "05:40"} ~ ${details?['LAST_RUN'] ?? "22:30"}'),
+        _buildInfoRow('배차간격', '${details?['INTERVAL'] ?? "13"}분'),
+        _buildInfoRow('주요경유지', '${details?['DIR_UP_NAME']} - ... - ${details?['DIR_DOWN_NAME']}'),
+        
+        const SizedBox(height: 40),
+        const Center(child: Text('정보 수정 제안 >', style: TextStyle(color: Colors.grey, fontSize: 13))),
+      ],
+    );
+  }
+
+  Widget _buildInfoRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Color(0xFF111827))),
+          const SizedBox(height: 8),
+          Text(value, style: const TextStyle(fontSize: 14, color: Color(0xFF4B5563), height: 1.5)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildModeActionBtn(IconData icon, String label, VoidCallback onTap) {
+    return ElevatedButton.icon(
+      onPressed: onTap,
+      icon: Icon(icon, size: 18),
+      label: Text(label),
+      style: ElevatedButton.styleFrom(
+        foregroundColor: const Color(0xFF2563EB),
+        backgroundColor: const Color(0xFFEFF6FF),
+        elevation: 0,
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
     );
   }
@@ -539,11 +655,11 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(width: 12),
               TextButton.icon(
                 onPressed: () {
-                  final schedules = appProvider.getBusSchedules(route.busName);
-                  if (schedules.isNotEmpty) _showBusScheduleDialog(schedules);
+                  // 💡 [Request] "시간표 보기" -> "정보" 버튼으로 변경 및 하단 시트 전환
+                  appProvider.openBusLineInfo(route.busName);
                 },
-                icon: const Icon(Icons.table_chart_outlined, size: 16),
-                label: const Text('시간표 보기', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                icon: const Icon(Icons.info_outline, size: 16),
+                label: const Text('정보', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
                 style: TextButton.styleFrom(
                   foregroundColor: const Color(0xFF2563EB),
                   padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -578,50 +694,6 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildSearchHeader(AppProvider appProvider) {
-    // 💡 [Request] 시간표 기점 확인 모드일 때의 상단 헤더 UI
-    if (appProvider.state.activeScheduleBusName != null) {
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        decoration: BoxDecoration(
-          color: const Color(0xFF2563EB), 
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 10)],
-        ),
-        child: Row(
-          children: [
-            const Icon(Icons.directions_bus, color: Colors.white, size: 22),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '${appProvider.state.activeScheduleBusName}번 노선 미리보기',
-                    style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                  const Text(
-                    '마커가 찍힌 정류장은 해당 시간표의 기점입니다.',
-                    style: TextStyle(color: Colors.white70, fontSize: 12),
-                  ),
-                ],
-              ),
-            ),
-            IconButton(
-              icon: const Icon(Icons.close, color: Colors.white, size: 24),
-              onPressed: () {
-                // 💡 [수석 개발자] 미리보기 모드 즉시 종료 및 상태 복구
-                appProvider.clearHighlightMarker();
-                if (appProvider.state.barMode == WidgetBarMode.stopDetail) {
-                  appProvider.setBarMode(WidgetBarMode.main);
-                }
-                if (mounted) setState(() {});
-              },
-            ),
-          ],
-        ),
-      );
-    }
-
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
       decoration: BoxDecoration(
@@ -687,9 +759,7 @@ class _HomeScreenState extends State<HomeScreen> {
             onSelected: (val) {
               setState(() => _selectedPlaceIndex = i);
               appProvider.setArriveLabel(places[i].name);
-              if (mapController != null) {
-                mapController!.setCenter(LatLng(places[i].lat, places[i].lng));
-              }
+              // 💡 지도 자동 이동 제거
             },
             selectedColor: const Color(0xFF2563EB),
             labelStyle: TextStyle(color: _selectedPlaceIndex == i ? Colors.white : Colors.black),
@@ -727,6 +797,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 else
                   SizedBox.expand(
                     child: KakaoMap(
+                      // 💡 [수석 개발자] 경로선 실종 방지용 강력한 리빌드 키
+                      // 세션 번호와 경로 세그먼트 개수를 조합하여 데이터 변경 시 지도를 강제로 다시 그리게 함
+                      key: ValueKey('map_v2_${appProvider.analysisCount}_${appProvider.state.routeSegments.length}'),
                       onMapCreated: _onMapCreated,
                       center: _currentPosition!,
                       customOverlays: _generateOverlays(appProvider),
@@ -868,7 +941,13 @@ class _HomeScreenState extends State<HomeScreen> {
                           controller: _internalSheetScrollController,
                           padding: const EdgeInsets.only(left: 20, right: 20, bottom: 80),
                           children: [
-                            if (appProvider.barMode == WidgetBarMode.main) ...[
+                            if (appProvider.state.barMode == WidgetBarMode.lineInfo) ...[
+                              _buildBusStopListView(appProvider),
+                            ] else if (appProvider.state.barMode == WidgetBarMode.lineSchedule) ...[
+                              _buildDualScheduleView(appProvider),
+                            ] else if (appProvider.state.barMode == WidgetBarMode.lineDetails) ...[
+                              _buildLineDetailInfoView(appProvider),
+                            ] else if (appProvider.barMode == WidgetBarMode.main) ...[
                               const Text('자주 가는 목적지', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                               const SizedBox(height: 15),
                               _buildPlacePresets(appProvider),

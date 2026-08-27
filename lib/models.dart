@@ -325,6 +325,31 @@ class BusRouteInfo {
   }
 }
 
+// ── 버스 노선 상세 정보 (정류장 목록용) ──
+class BusLineStation {
+  final String stationName;
+  final String stationId;
+  final String? arsId;
+  final double lat;
+  final double lng;
+  final String firstBusTime;
+  final String lastBusTime;
+  final bool isTransfer;
+  final bool hasBusNow; // 실시간 버스 위치 표시용
+
+  BusLineStation({
+    required this.stationName,
+    required this.stationId,
+    this.arsId,
+    required this.lat,
+    required this.lng,
+    this.firstBusTime = '--:--',
+    this.lastBusTime = '--:--',
+    this.isTransfer = false,
+    this.hasBusNow = false,
+  });
+}
+
 // ── 버스 정류소 데이터 모델 ──
 
 class BusStop {

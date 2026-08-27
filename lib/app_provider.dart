@@ -3,7 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:kakao_map_plugin/kakao_map_plugin.dart';
 import 'package:geolocator/geolocator.dart'; // 💡 거리 계산을 위해 추가
 import 'models.dart';
-import 'data/bus_schedules.dart'; // 💡 추가
+import 'data/bus_schedules.dart'; 
+import 'data/bus_line_data.dart'; // 💡 추가: 하드코딩 데이터 접근을 위해 필요
 import 'storage_service.dart';
 import 'services/routing_service.dart';
 import 'services/bus_api_service.dart';
@@ -13,7 +14,7 @@ import 'services/tmap_service.dart';
 import 'usecases/register_alarm_usecase.dart'; // 💡 추가
 import 'services/toast_service.dart'; // 💡 추가
 
-enum WidgetBarMode { main, stopDetail }
+enum WidgetBarMode { main, stopDetail, lineInfo, lineSchedule, lineDetails }
 
 // 💡 Atcha의 HomeViewModel.State 포팅
 class HomeState {
@@ -24,9 +25,10 @@ class HomeState {
   final String? errorMessage;
   final bool isNearDestination;
   final WidgetBarMode barMode;
-  final String? activeScheduleBusName; 
-  final List<MapPin>? backupPins; // 💡 원래 핀 백업
-  final List<RouteSegment>? backupSegments; // 💡 원래 경로 백업
+  final String? activeBusName; 
+  final List<BusLineStation> activeLineStations;
+  final Map<String, dynamic>? activeBusDetails; 
+  final String activeDirection; // 💡 추가: 상행(UP)/하행(DOWN) 상태
 
   HomeState({
     this.isAnalyzing = false,
@@ -36,9 +38,10 @@ class HomeState {
     this.errorMessage,
     this.isNearDestination = false,
     this.barMode = WidgetBarMode.main,
-    this.activeScheduleBusName,
-    this.backupPins,
-    this.backupSegments,
+    this.activeBusName,
+    this.activeLineStations = const [],
+    this.activeBusDetails,
+    this.activeDirection = 'UP',
   });
 
   HomeState copyWith({
@@ -49,10 +52,10 @@ class HomeState {
     String? errorMessage,
     bool? isNearDestination,
     WidgetBarMode? barMode,
-    String? activeScheduleBusName,
-    List<MapPin>? backupPins,
-    List<RouteSegment>? backupSegments,
-    bool clearBackup = false,
+    String? activeBusName,
+    List<BusLineStation>? activeLineStations,
+    Map<String, dynamic>? activeBusDetails,
+    String? activeDirection,
   }) {
     return HomeState(
       isAnalyzing: isAnalyzing ?? this.isAnalyzing,
@@ -62,10 +65,10 @@ class HomeState {
       errorMessage: errorMessage ?? this.errorMessage,
       isNearDestination: isNearDestination ?? this.isNearDestination,
       barMode: barMode ?? this.barMode,
-      // 💡 [수석 개발자] null 전달 시 실제 null로 세팅될 수 있도록 로직 보정
-      activeScheduleBusName: clearBackup ? null : (activeScheduleBusName ?? this.activeScheduleBusName),
-      backupPins: clearBackup ? null : (backupPins ?? this.backupPins),
-      backupSegments: clearBackup ? null : (backupSegments ?? this.backupSegments),
+      activeBusName: activeBusName ?? this.activeBusName,
+      activeLineStations: activeLineStations ?? this.activeLineStations,
+      activeBusDetails: activeBusDetails ?? this.activeBusDetails,
+      activeDirection: activeDirection ?? this.activeDirection,
     );
   }
 }
@@ -123,6 +126,7 @@ class AppProvider extends ChangeNotifier {
   List<Place> get favoritePlaces => _favoritePlaces;
   bool get shouldFitBounds => _shouldFitBounds;
   int get selectedRouteIndex => _selectedRouteIndex;
+  int get analysisCount => _analysisCount; // 💡 지도 리빌드 트리거를 위해 노출
   String? get selectedStopName => _selectedStopName;
   bool get isLoadingArrivals => _isLoadingArrivals;
   List<BusRouteInfo> get stopArrivals => _stopArrivals;
@@ -140,6 +144,53 @@ class AppProvider extends ChangeNotifier {
 
   void setBarMode(WidgetBarMode mode) {
     _updateState(_state.copyWith(barMode: mode));
+  }
+
+  /// 💡 [New Request] 버스 노선 정보(정류장 목록 등) 열기
+  Future<void> openBusLineInfo(String busName, {String direction = 'UP'}) async {
+    debugPrint('📋 [Provider] $busName ($direction) 노선 정보 열기');
+    
+    final lookupKey = "${busName}_$direction";
+    
+    // 💡 [수석 개발자] 하드코딩 데이터 즉시 로드로 0ms 반응 구현
+    // _busApiService를 통하지 않고 즉시 hardcoded 데이터에 접근하여 상태 갱신
+    final List<BusLineStation> cachedStations = hardcodedBusLines[lookupKey] ?? [];
+    final Map<String, dynamic>? cachedDetails = hardcodedBusDetails[busName];
+
+    // 1. 상태 전환 및 초기화 (하드코딩 데이터가 있으면 즉시 반영)
+    _updateState(_state.copyWith(
+      barMode: WidgetBarMode.lineInfo,
+      activeBusName: busName,
+      activeLineStations: cachedStations,
+      activeBusDetails: cachedDetails,
+      activeDirection: direction,
+    ));
+
+    // 2. 하드코딩 데이터가 없거나 부족할 때만 백그라운드 로드
+    if (cachedStations.isEmpty || cachedDetails == null) {
+      try {
+        final results = await Future.wait([
+          _busApiService.getLineStations(lookupKey),
+          _busApiService.getBusLineDetailInfo(busName),
+        ]);
+
+        if (_state.activeBusName == busName && _state.activeDirection == direction) {
+          _updateState(_state.copyWith(
+            activeLineStations: results[0] as List<BusLineStation>,
+            activeBusDetails: results[1] as Map<String, dynamic>?,
+          ));
+        }
+      } catch (e) {
+        debugPrint('❌ [LineInfo] 데이터 로드 실패: $e');
+      }
+    }
+  }
+
+  /// 💡 [New Request] 방향 전환
+  Future<void> switchBusDirection() async {
+    if (_state.activeBusName == null) return;
+    final nextDir = _state.activeDirection == 'UP' ? 'DOWN' : 'UP';
+    await openBusLineInfo(_state.activeBusName!, direction: nextDir);
   }
 
   /// 💡 [Request] 실시간 정보 새로고침
@@ -205,6 +256,8 @@ class AppProvider extends ChangeNotifier {
     final departPin = _state.pins.firstWhere((p) => p.type == PinType.depart);
     final currentSession = ++_analysisCount;
     
+    debugPrint('🛤️ [Provider] 분석 세션($currentSession) 시작: (${departPin.x}, ${departPin.y}) -> (${arrivePin.x}, ${arrivePin.y})');
+
     // 💡 분석 시작 시 이전 버스 정류장들만 제거 (출발/도착지는 유지)
     final currentPins = List<MapPin>.from(_state.pins);
     currentPins.removeWhere((p) => p.type == PinType.busStop);
@@ -217,40 +270,56 @@ class AppProvider extends ChangeNotifier {
       pins: currentPins,
     ));
 
-    final tmapData = await _tmapService.getTransitRoute(
-      LatLng(departPin.x, departPin.y), 
-      LatLng(arrivePin.x, arrivePin.y)
-    );
+    try {
+      final tmapData = await _tmapService.getTransitRoute(
+        LatLng(departPin.x, departPin.y), 
+        LatLng(arrivePin.x, arrivePin.y)
+      );
 
-    if (currentSession != _analysisCount) return;
-
-    if (tmapData != null) {
-      final Map<String, dynamic> parsed = _tmapService.parseTmapData(tmapData);
-      final List<BusRouteInfo> newRoutes = List<BusRouteInfo>.from(parsed['busRoutes'] ?? []);
-      _rawItineraries = parsed['rawItineraries'] ?? [];
-      
-      _updateState(_state.copyWith(
-        routes: newRoutes,
-        errorMessage: parsed['errorMessage'],
-      ));
-
-      await _enrichRecommendedRoutes(currentSession);
-      
       if (currentSession != _analysisCount) return;
 
-      if (_rawItineraries.isNotEmpty) {
-        unawaited(selectRoute(0, notify: false)); // 💡 비동기 호출로 변경
+      if (tmapData != null) {
+        final Map<String, dynamic> parsed = _tmapService.parseTmapData(tmapData);
+        final List<BusRouteInfo> newRoutes = List<BusRouteInfo>.from(parsed['busRoutes'] ?? []);
+        _rawItineraries = parsed['rawItineraries'] ?? [];
+        
+        _updateState(_state.copyWith(
+          routes: newRoutes,
+          errorMessage: parsed['errorMessage'],
+        ));
+
+        await _enrichRecommendedRoutes(currentSession);
+        
+        if (currentSession != _analysisCount) return;
+
+        if (_rawItineraries.isNotEmpty) {
+          // 💡 [수석 개발자] 경로선 실종 방지: notify: true로 상태 갱신을 확실히 수행
+          await selectRoute(0); 
+        }
+        
+        _shouldFitBounds = true;
+      } else {
+        _updateState(_state.copyWith(
+          errorMessage: '데이터를 불러올 수 없습니다. (Tmap 서버 응답 없음)',
+          routes: [],
+          isAnalyzing: false,
+        ));
+        return; 
       }
-      
-      _shouldFitBounds = true;
-    } else {
+    } catch (e) {
+      debugPrint('❌ [Provider] 분석 중 치명적 에러: $e');
       _updateState(_state.copyWith(
-        errorMessage: '데이터를 불러올 수 없습니다.',
+        errorMessage: '경로 분석 중 오류가 발생했습니다: $e',
         routes: [],
         isAnalyzing: false,
       ));
+      return;
     }
-    _updateState(_state.copyWith(isAnalyzing: false));
+    
+    // 세션이 아직 유효한 경우만 최종 분석 중 상태 해제
+    if (currentSession == _analysisCount) {
+      _updateState(_state.copyWith(isAnalyzing: false));
+    }
   }
 
   Future<void> _enrichRecommendedRoutes(int session) async {
@@ -454,84 +523,6 @@ class AppProvider extends ChangeNotifier {
 
     _isLoadingArrivals = false;
     _updateState(_state.copyWith()); 
-  }
-
-  /// 💡 [Request] 임시 목적지 강조 표시 및 노선 미리보기 (원래 경로 백업)
-  Future<void> setHighlightMarker(double lat, double lng, String label, {String? busName}) async {
-    // 💡 [수석 개발자] 이미 미리보기 모드라면 추가 백업을 하지 않음 (중요)
-    final bool alreadyPreviewing = _state.backupPins != null;
-    
-    final List<MapPin> originalPins = alreadyPreviewing ? _state.backupPins! : List<MapPin>.from(_state.pins);
-    final List<RouteSegment> originalSegments = alreadyPreviewing ? _state.backupSegments! : List<RouteSegment>.from(_state.routeSegments);
-    
-    final highlightPin = MapPin(x: lat, y: lng, type: PinType.passStop, label: label, address: 'highlight');
-
-    // 1. UI 즉시 업데이트 (기존 경로 숨김 + 강조 마커 표시)
-    _updateState(_state.copyWith(
-      pins: [highlightPin], 
-      routeSegments: [],    
-      activeScheduleBusName: busName,
-      backupPins: originalPins,
-      backupSegments: originalSegments,
-    ));
-
-    // 2. 노선 경로(Full Line Path) 비동기 조회
-    if (busName != null) {
-      debugPrint('📡 [Preview] $busName 노선 경로 조회 시작 (Tmap)...');
-      // 💡 [수석 개발자] 광주 BIS 대신 더 정밀하고 안정적인 Tmap 데이터 엔진으로 교체
-      final pathPoints = await _tmapService.getBusLinePath(busName);
-      
-      // 아직 미리보기 모드인지 확인 후 업데이트
-      if (_state.activeScheduleBusName == busName) {
-        if (pathPoints.isNotEmpty) {
-          final lineSegment = RouteSegment(
-            id: 'line_preview_${busName}_${DateTime.now().millisecondsSinceEpoch}',
-            points: pathPoints,
-            color: const Color(0xFF2563EB),
-            width: 7.0,
-          );
-          
-          _updateState(_state.copyWith(routeSegments: [lineSegment]));
-          debugPrint('✅ [Preview] $busName 노선 경로 표시 완료 (${pathPoints.length}개 좌표)');
-        } else {
-          debugPrint('⚠️ [Preview] 노선 경로 데이터를 가져오지 못했습니다.');
-        }
-      }
-    }
-    
-    _shouldFitBounds = true;
-    notifyListeners();
-  }
-
-  /// 💡 [Request] 강조 표시 제거 및 원래 경로 복구
-  void clearHighlightMarker() {
-    debugPrint('🧹 [Preview] 미리보기 모드 해제 및 원래 경로 복구 가동');
-    
-    // 💡 [수석 개발자] 상태를 명시적으로 재설정하여 사이드 이펙트 방지
-    if (_state.backupPins != null) {
-      _updateState(HomeState(
-        isAnalyzing: _state.isAnalyzing,
-        routes: _state.routes,
-        pins: List<MapPin>.from(_state.backupPins!),
-        routeSegments: List<RouteSegment>.from(_state.backupSegments ?? []),
-        errorMessage: _state.errorMessage,
-        isNearDestination: _state.isNearDestination,
-        barMode: _state.barMode,
-        activeScheduleBusName: null, // 💡 미리보기 바 확실히 제거
-        backupPins: null,
-        backupSegments: null,
-      ));
-    } else {
-      // 백업이 없는 경우 (드문 케이스) 단순히 하이라이트만 제거
-      _updateState(_state.copyWith(
-        pins: _state.pins.where((p) => p.address != 'highlight').toList(),
-        activeScheduleBusName: null,
-        clearBackup: true,
-      ));
-    }
-    
-    _shouldFitBounds = true;
-    notifyListeners(); // 💡 확실한 UI 갱신
   }
 
 
