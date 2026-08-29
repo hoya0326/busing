@@ -151,28 +151,29 @@ class BusApiService {
     return null;
   }
 
-  Future<List<BusRouteInfo>> getArrivalInfo(String busStopId, {String? stopName, String? targetBusName}) async {
+  Future<List<BusRouteInfo>> getArrivalInfo(String busStopId, {String? stopName, String? targetBusName, double? lat, double? lng}) async {
     if (busStopId == 'Unknown' || busStopId.isEmpty) return [];
 
     final nowKst = DateTime.now().toUtc().add(const Duration(hours: 9));
     
-    // 타겟 버스가 있는 경우 캐시 무시하고 강제 조회 (최신성 보장)
+    // 💡 [수석 개발자] 해당 정류장을 지나는 모든 하드코딩 노선 목록 확보 (좌표 기반 검증 추가)
+    final Set<String> expectedBuses = _getExpectedBusesForStop(busStopId, stopName, lat: lat, lng: lng);
+
+    // 타겟 버스가 있는 경우 캐시 무시하고 강제 조회
     if (targetBusName == null && _arrivalCache.containsKey(busStopId)) {
       final cache = _arrivalCache[busStopId]!;
-      if (nowKst.difference(cache.timestamp).inSeconds < 30) { // 30초로 단축
-        return cache.data;
+      if (nowKst.difference(cache.timestamp).inSeconds < 30) {
+        return _mergeWithExpected(cache.data, expectedBuses);
       }
     }
 
+    List<BusRouteInfo> realTimeArrivals = [];
     try {
       List<dynamic> items = [];
-      
-      // 1. 기본 조회
       final url = BusApiEndpoint.arriveInfo(busStopId);
       final response1 = await http.get(url).timeout(const Duration(seconds: 5));
       if (response1.statusCode == 200) items = _parseArrivalJson(response1.body);
 
-      // 2. 결과 없으면 STATION_ID 시도
       if (items.isEmpty) {
         final altUrl = Uri.parse(url.toString().replaceAll('BUSSTOP_ID', 'STATION_ID'));
         final response2 = await http.get(altUrl).timeout(const Duration(seconds: 5));
@@ -180,7 +181,7 @@ class BusApiService {
       }
 
       if (items.isNotEmpty) {
-        final arrivals = items.map((item) {
+        realTimeArrivals = items.map((item) {
           final lineName = item['LINE_NAME'] ?? item['lineName'] ?? item['SHORT_LINE_NAME'] ?? '버스';
           final remainMinVal = item['REMAIN_MIN'] ?? item['remainMin'] ?? '0';
           final dirEnd = item['DIR_END'] ?? item['dirEnd'] ?? '종점';
@@ -196,28 +197,111 @@ class BusApiService {
           );
         }).toList();
 
-        _arrivalCache[busStopId] = _ArrivalCache(arrivals, nowKst);
-        
-        // 💡 [수석 개발자] 타겟 버스가 목록에 있는지 확인
-        if (targetBusName != null) {
-          final cleanTarget = targetBusName.replaceAll(RegExp(r'[^0-9]'), '');
-          bool found = arrivals.any((a) => a.busName.replaceAll(RegExp(r'[^0-9]'), '') == cleanTarget);
-          
-          if (!found) {
-            debugPrint('🔍 [BusAPI] 타겟($targetBusName) 누락 - 노선 위치 정보 추적 시도');
-            // 여기서 더 깊은 추적(Line Location API)을 할 수 있으나, 
-            // 현재는 1순위로 시간표 엔진을 호출하여 "정보 없음" 상태를 방어함
-          }
-        }
-        
-        return arrivals;
+        _arrivalCache[busStopId] = _ArrivalCache(realTimeArrivals, nowKst);
       }
     } catch (e) { 
       debugPrint('❌ [BusAPI] 조회 예외: $e'); 
     }
 
-    if (stopName != null) return await _getScheduledArrivals(stopName);
-    return [];
+    // 💡 [핵심] 실시간 정보와 하드코딩 데이터를 병합하여 반환
+    final merged = _mergeWithExpected(realTimeArrivals, expectedBuses);
+    
+    if (merged.isEmpty && stopName != null) return await _getScheduledArrivals(stopName);
+    return merged;
+  }
+
+  /// 💡 [New] 하드코딩 데이터에서 해당 정류장을 경유하는 버스 이름 추출
+  Set<String> _getExpectedBusesForStop(String stopId, String? name, {double? lat, double? lng}) {
+    final Set<String> buses = {};
+    
+    // 💡 [수석 개발자] 매칭 정확도를 위해 데이터 규격화
+    final cleanId = stopId.replaceAll(RegExp(r'[^0-9]'), '');
+    final cleanName = name?.replaceAll(' ', '').replaceAll(RegExp(r'\(.*\)'), '') ?? '';
+
+    if (cleanId.isEmpty && cleanName.isEmpty && (lat == null || lng == null)) return buses;
+
+    hardcodedBusLines.forEach((key, stations) {
+      final busName = key.split('_')[0];
+      
+      // 💡 [수정] 3중 검증 필터 (좌표 -> ID -> 이름) 적용으로 정확도 극대화
+      final passes = stations.any((s) {
+        // 1순위: 좌표 기반 정밀 검증 (물리적 거리 확인)
+        if (lat != null && lng != null && s.lat != 0 && s.lng != 0) {
+          final distSq = (s.lat - lat) * (s.lat - lat) + (s.lng - lng) * (s.lng - lng);
+          // 약 60m 이내면 동일 정류장으로 확정
+          if (distSq < 0.0000004) return true; 
+        }
+
+        // 2순위: ID 기반 엄격 매칭 (내부 ID 또는 공공 ARS_ID)
+        final targetId = s.stationId.replaceAll(RegExp(r'[^0-9]'), '');
+        final targetArs = s.arsId?.replaceAll(RegExp(r'[^0-9]'), '') ?? '';
+        
+        if (cleanId.isNotEmpty) {
+          if (targetId == cleanId || targetArs == cleanId) {
+            // ID가 같더라도 좌표 정보가 있다면 최소한의 거리 확인 (오매칭 방지)
+            if (lat != null && lng != null && s.lat != 0) {
+              final distSq = (s.lat - lat) * (s.lat - lat) + (s.lng - lng) * (s.lng - lng);
+              if (distSq > 0.00001) return false; // 약 300m 이상 멀면 무시
+            }
+            return true;
+          }
+        }
+        
+        // 3순위: 명칭 기반 매칭 (보조 수단)
+        if (cleanName.isNotEmpty) {
+          final targetName = s.stationName.replaceAll(' ', '').replaceAll(RegExp(r'\(.*\)'), '');
+          if (targetName == cleanName) {
+             // 이름이 같을 경우 매우 엄격한 거리 확인 (동일 명칭 정류장 오인 방지)
+             if (lat != null && lng != null && s.lat != 0) {
+                final distSq = (s.lat - lat) * (s.lat - lat) + (s.lng - lng) * (s.lng - lng);
+                return distSq < 0.000002; // 약 140m 이내
+             }
+             return true;
+          }
+        }
+        return false;
+      });
+
+      if (passes) buses.add(busName);
+    });
+    return buses;
+  }
+
+  /// 💡 [New] 실시간 정보와 예상 노선을 병합 (실시간 정보가 없으면 '정보 없음' 추가)
+  List<BusRouteInfo> _mergeWithExpected(List<BusRouteInfo> realTime, Set<String> expected) {
+    final List<BusRouteInfo> result = List.from(realTime);
+    
+    // 💡 [수석 개발자] 실시간 정보에 있는 노선들의 '순수 번호' 추출
+    final Set<String> realTimeNames = realTime.map((r) {
+      return r.busName.replaceAll(RegExp(r'[^0-9가-힣]'), '');
+    }).toSet();
+
+    for (var busName in expected) {
+      final cleanExpected = busName.replaceAll(RegExp(r'[^0-9가-힣]'), '');
+      
+      // 💡 [개선] 실시간 정보에 없는 경우만 '정보 없음'으로 추가
+      if (!realTimeNames.contains(cleanExpected)) {
+        result.add(BusRouteInfo(
+          busName: busName,
+          busArrivalRemaining: -1, // 💡 실시간 정보 없음
+          walkTimeRemaining: 0,
+          travelDuration: 15,
+          totalDuration: 15,
+          routeDescription: '현재 실시간 정보가 제공되지 않는 구간입니다.',
+        ));
+      }
+    }
+    
+    // 💡 정렬: 실시간 정보(남은 시간 > 0) -> 실시간 정보 없음(-1) -> 운행 종료(-2)
+    result.sort((a, b) {
+      if (a.busArrivalRemaining >= 0 && b.busArrivalRemaining < 0) return -1;
+      if (a.busArrivalRemaining < 0 && b.busArrivalRemaining >= 0) return 1;
+      if (a.busArrivalRemaining == -1 && b.busArrivalRemaining == -2) return -1;
+      if (a.busArrivalRemaining == -2 && b.busArrivalRemaining == -1) return 1;
+      return a.busName.compareTo(b.busName);
+    });
+
+    return result;
   }
 
   /// 💡 [Atcha Fallback] 실시간 데이터 차단 시 정류장 명칭 기반으로 실제 시간표 DB에서 매칭

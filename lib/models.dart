@@ -382,7 +382,7 @@ class RouteSegment {
     required this.id,
     required this.points,
     required this.color,
-    this.width = 6.0,
+    this.width = 4.0, // 💡 [수석 개발자] 기본 두께를 4.0으로 하향 조정
     this.strokeStyle = StrokeStyle.solid, // 💡 기본값 실선
   });
 }
