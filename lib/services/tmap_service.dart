@@ -277,7 +277,7 @@ class TmapService {
           id: 'seg_${segments.length}_${mode}_${points.length}',
           points: points,
           color: mode == 'WALK' ? const Color(0xFF34D399) : _parseColor(leg['routeColor']),
-          width: mode == 'WALK' ? 5.0 : 10.0,
+          width: mode == 'WALK' ? 3.5 : 7.0, // 💡 [수석 개발자] 경로선을 더 얇고 세련되게 조정
           strokeStyle: mode == 'WALK' ? StrokeStyle.dot : StrokeStyle.solid,
         ));
       }

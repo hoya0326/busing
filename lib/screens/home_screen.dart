@@ -212,34 +212,34 @@ class _HomeScreenState extends State<HomeScreen> {
       customOverlayId: 'stop_${pin.x}_${pin.y}_${label}_${subLabel ?? ""}',
       latLng: LatLng(pin.x, pin.y),
       content: '''
-        <div style="display: flex; flex-direction: column; align-items: center; cursor: pointer;">
+        <div style="display: flex; flex-direction: column; align-items: center; cursor: pointer; transform: scale(${mini ? 0.8 : 0.9});">
           ${showLabel ? '''
             <div style="display: flex; flex-direction: column; align-items: center;">
               ${subLabel != null ? '''
                 <div style="background: white; color: ${colorToHex(color)}; 
-                  padding: 2px 6px; border-radius: 4px; font-size: 10px; 
-                  font-weight: bold; margin-bottom: 2px; box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+                  padding: 1px 4px; border-radius: 3px; font-size: 9px; 
+                  font-weight: bold; margin-bottom: 1px; box-shadow: 0 1px 2px rgba(0,0,0,0.15);
                   border: 1px solid ${colorToHex(color)}; white-space: nowrap;">
                   $subLabel
                 </div>''' : ''}
               <div style="background: ${colorToHex(color)}; color: white; 
-                padding: ${mini ? '2px 6px' : '3px 9px'}; 
-                border-radius: 12px; 
-                font-size: ${mini ? '9px' : '11px'}; 
-                font-weight: bold; margin-bottom: 2px; 
-                box-shadow: 0 2px 4px rgba(0,0,0,0.2); white-space: nowrap; 
-                border: 1px solid rgba(255,255,255,0.3);
-                opacity: ${mini ? '0.8' : '1.0'};">
+                padding: ${mini ? '1px 4px' : '2px 7px'}; 
+                border-radius: 10px; 
+                font-size: ${mini ? '8px' : '10px'}; 
+                font-weight: bold; margin-bottom: 1px; 
+                box-shadow: 0 1px 3px rgba(0,0,0,0.15); white-space: nowrap; 
+                border: 1px solid rgba(255,255,255,0.2);
+                opacity: ${mini ? '0.75' : '1.0'};">
                 $label
               </div>
             </div>''' : ''}
-          <div style="width: ${mini ? '8px' : '14px'}; height: ${mini ? '8px' : '14px'}; 
+          <div style="width: ${mini ? '6px' : '10px'}; height: ${mini ? '6px' : '10px'}; 
             background: white; border-radius: 50%; 
-            border: ${mini ? '2px' : '3px'} solid ${colorToHex(color)}; 
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);"></div>
+            border: ${mini ? '1.5px' : '2.5px'} solid ${colorToHex(color)}; 
+            box-shadow: 0 1px 3px rgba(0,0,0,0.15);"></div>
         </div>
       ''',
-      xAnchor: 0.5, yAnchor: 0.8,
+      xAnchor: 0.5, yAnchor: 0.9,
     );
   }
 
@@ -271,11 +271,47 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _moveToMyLocation() async {
-    // 💡 지도 이동 제거
+    if (_currentPosition != null && mapController != null) {
+      mapController!.setCenter(_currentPosition!);
+      mapController!.setLevel(3);
+      setState(() {
+        _currentZoomLevel = 3;
+      });
+    }
   }
 
   void _fitRouteBounds(LatLng p1, LatLng p2) {
-    // 💡 지도 이동 제거
+    if (mapController == null) return;
+    
+    final centerLat = (p1.latitude + p2.latitude) / 2;
+    final centerLng = (p1.longitude + p2.longitude) / 2;
+    
+    // 두 좌표 간의 거리 계산 (단순 차이 기반 줌 레벨 산출)
+    final latDiff = (p1.latitude - p2.latitude).abs();
+    final lngDiff = (p1.longitude - p2.longitude).abs();
+    final maxDiff = latDiff > lngDiff ? latDiff : lngDiff;
+
+    int optimalLevel = 3;
+    if (maxDiff > 0.1) optimalLevel = 8;
+    else if (maxDiff > 0.05) optimalLevel = 7;
+    else if (maxDiff > 0.02) optimalLevel = 6;
+    else if (maxDiff > 0.01) optimalLevel = 5;
+    else if (maxDiff > 0.005) optimalLevel = 4;
+    else optimalLevel = 3;
+
+    // 💡 [수석 개발자] 경로선이 즉시 뜨지 않는 현상을 해결하기 위해 
+    // 지도 중심점과 레벨을 순차적으로 업데이트하여 네이티브 뷰 리페인팅을 강제 유도합니다.
+    mapController!.setCenter(LatLng(centerLat, centerLng));
+    
+    // 0.1초 뒤에 줌 레벨을 조절하여 확실하게 선이 그려지도록 조치
+    Future.delayed(const Duration(milliseconds: 100), () {
+      if (mounted && mapController != null) {
+        mapController!.setLevel(optimalLevel);
+        setState(() {
+          _currentZoomLevel = optimalLevel;
+        });
+      }
+    });
   }
 
   Widget _buildServiceEndedWidget(String? customMessage) {
@@ -773,14 +809,34 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final appProvider = context.watch<AppProvider>();
 
-    if (appProvider.shouldFitBounds) {
+    // 💡 [수석 개발자] 목적지 입력 시 해당 위치로 유동적 이동
+    if (appProvider.shouldMoveToArrival && mapController != null) {
+      final arrivePin = appProvider.pins.firstWhere(
+        (p) => p.type == PinType.arrive, 
+        orElse: () => MapPin(x: 0, y: 0, type: PinType.arrive)
+      );
+      if (arrivePin.x != 0) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mapController != null) {
+            mapController!.setCenter(LatLng(arrivePin.x, arrivePin.y));
+            mapController!.setLevel(3);
+            context.read<AppProvider>().resetMoveToArrival();
+          }
+        });
+      }
+    }
+
+    // 💡 [수석 개발자] 경로 분석 완료 시 전체 경로가 보이도록 자동 줌 조절
+    if (appProvider.shouldFitBounds && mapController != null) {
       final departPin = appProvider.pins.firstWhere((p) => p.type == PinType.depart, orElse: () => MapPin(x: 0, y: 0, type: PinType.depart));
       final arrivePin = appProvider.pins.firstWhere((p) => p.type == PinType.arrive, orElse: () => MapPin(x: 0, y: 0, type: PinType.arrive));
       
       if (departPin.x != 0 && arrivePin.x != 0) {
-        Future.microtask(() {
-          _fitRouteBounds(LatLng(departPin.x, departPin.y), LatLng(arrivePin.x, arrivePin.y));
-          context.read<AppProvider>().resetFitBounds();
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mapController != null) {
+            _fitRouteBounds(LatLng(departPin.x, departPin.y), LatLng(arrivePin.x, arrivePin.y));
+            context.read<AppProvider>().resetFitBounds();
+          }
         });
       }
     }
@@ -797,9 +853,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 else
                   SizedBox.expand(
                     child: KakaoMap(
-                      // 💡 [수석 개발자] 경로선 실종 방지용 강력한 리빌드 키
-                      // 세션 번호와 경로 세그먼트 개수를 조합하여 데이터 변경 시 지도를 강제로 다시 그리게 함
-                      key: ValueKey('map_v2_${appProvider.analysisCount}_${appProvider.state.routeSegments.length}'),
+                      // 💡 [수석 개발자] 분석 세션별로 키를 교체하여 플랫폼 뷰의 데이터 동기화 이슈 해결
+                      key: ValueKey('map_session_${appProvider.analysisCount}'),
                       onMapCreated: _onMapCreated,
                       center: _currentPosition!,
                       customOverlays: _generateOverlays(appProvider),

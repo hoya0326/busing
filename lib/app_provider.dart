@@ -28,7 +28,8 @@ class HomeState {
   final String? activeBusName; 
   final List<BusLineStation> activeLineStations;
   final Map<String, dynamic>? activeBusDetails; 
-  final String activeDirection; // 💡 추가: 상행(UP)/하행(DOWN) 상태
+  final String activeDirection; 
+  final int updateTrigger; // 💡 지도 리빌드 강제 트리거
 
   HomeState({
     this.isAnalyzing = false,
@@ -42,6 +43,7 @@ class HomeState {
     this.activeLineStations = const [],
     this.activeBusDetails,
     this.activeDirection = 'UP',
+    this.updateTrigger = 0,
   });
 
   HomeState copyWith({
@@ -56,6 +58,7 @@ class HomeState {
     List<BusLineStation>? activeLineStations,
     Map<String, dynamic>? activeBusDetails,
     String? activeDirection,
+    int? updateTrigger,
   }) {
     return HomeState(
       isAnalyzing: isAnalyzing ?? this.isAnalyzing,
@@ -69,6 +72,7 @@ class HomeState {
       activeLineStations: activeLineStations ?? this.activeLineStations,
       activeBusDetails: activeBusDetails ?? this.activeBusDetails,
       activeDirection: activeDirection ?? this.activeDirection,
+      updateTrigger: updateTrigger ?? this.updateTrigger,
     );
   }
 }
@@ -107,6 +111,7 @@ class AppProvider extends ChangeNotifier {
   bool _shouldFitBounds = false;
   bool _isSearching = false;
   bool _isLoadingArrivals = false;
+  bool _shouldMoveToArrival = false; // 💡 목적지 입력 시 카메라 이동 트리거
   int _selectedRouteIndex = 0;
   int _analysisCount = 0; 
   LatLng? _currentSelectedStopLatLng;
@@ -115,6 +120,7 @@ class AppProvider extends ChangeNotifier {
   WidgetBarMode get barMode => _state.barMode;
   bool get isAnalyzing => _state.isAnalyzing;
   bool get isNearDestination => _state.isNearDestination;
+  bool get shouldMoveToArrival => _shouldMoveToArrival; // 💡 게터 추가
   List<BusRouteInfo> get recommendedRoutes => _state.routes;
   List<MapPin> get pins => _state.pins;
   List<RouteSegment> get routeSegments => _state.routeSegments; // 💡 게터 수정
@@ -266,8 +272,9 @@ class AppProvider extends ChangeNotifier {
       isAnalyzing: true,
       errorMessage: null,
       routes: [],
-      routeSegments: [], // 💡 추가됨
+      routeSegments: [], 
       pins: currentPins,
+      updateTrigger: _state.updateTrigger + 1, // 💡 지도 즉시 청소 트리거
     ));
 
     try {
@@ -432,9 +439,14 @@ class AppProvider extends ChangeNotifier {
       unawaited(_storageService.saveRecentSearch(selectedPlace));
 
       cleanedPins.add(MapPin(x: targetLat, y: targetLng, type: PinType.arrive));
-      _updateState(_state.copyWith(pins: cleanedPins));
+      _shouldMoveToArrival = true; // 💡 카메라 이동 활성화
+      _updateState(_state.copyWith(pins: cleanedPins, updateTrigger: _state.updateTrigger + 1));
       _triggerAnalysis();
     }
+  }
+
+  void resetMoveToArrival() {
+    _shouldMoveToArrival = false;
   }
 
   void resetFitBounds() {
@@ -481,6 +493,8 @@ class AppProvider extends ChangeNotifier {
         stop.id, 
         stopName: stop.name,
         targetBusName: targetBus,
+        lat: lat, // 💡 좌표 전달 추가
+        lng: lng,
       );
       
       // 💡 [수석 개발자] 환승 노선 인지형 소팅 알고리즘 적용
@@ -500,18 +514,31 @@ class AppProvider extends ChangeNotifier {
         }
 
         targetBusName ??= currentRoute.busName;
-        final cleanTarget = targetBusName.replaceAll(RegExp(r'[^0-9]'), '');
+        final cleanTarget = targetBusName!.replaceAll(RegExp(r'[^0-9가-힣]'), '');
         
         arrivals.sort((a, b) {
-          final aClean = a.busName.replaceAll(RegExp(r'[^0-9]'), '');
-          final bClean = b.busName.replaceAll(RegExp(r'[^0-9]'), '');
+          final aClean = a.busName.replaceAll(RegExp(r'[^0-9가-힣]'), '');
+          final bClean = b.busName.replaceAll(RegExp(r'[^0-9가-힣]'), '');
           
-          bool aMatch = aClean == cleanTarget || a.busName.contains(targetBusName!);
-          bool bMatch = bClean == cleanTarget || b.busName.contains(targetBusName!);
+          bool aIsTarget = aClean == cleanTarget || a.busName.contains(targetBusName!);
+          bool bIsTarget = bClean == cleanTarget || b.busName.contains(targetBusName!);
           
-          if (aMatch && !bMatch) return -1;
-          if (!aMatch && bMatch) return 1;
-          return 0;
+          // 1. [0순위] 경로상 타겟 버스 고정 (실시간 여부 무관)
+          if (aIsTarget && !bIsTarget) return -1;
+          if (!aIsTarget && bIsTarget) return 1;
+          
+          // 2. [1순위] 실시간 정보가 있는 버스 우선 (남은 분 >= 0)
+          bool aHasInfo = a.busArrivalRemaining >= 0;
+          bool bHasInfo = b.busArrivalRemaining >= 0;
+          if (aHasInfo && !bHasInfo) return -1;
+          if (!aHasInfo && bHasInfo) return 1;
+          
+          // 3. [2순위] 실시간 정보가 없는 버스들(-1, -2 등) 중 -1(정보없음)을 -2(종료)보다 위로
+          if (a.busArrivalRemaining == -1 && b.busArrivalRemaining == -2) return -1;
+          if (a.busArrivalRemaining == -2 && b.busArrivalRemaining == -1) return 1;
+
+          // 4. 나머지는 이름순
+          return a.busName.compareTo(b.busName);
         });
       }
       
@@ -678,7 +705,8 @@ class AppProvider extends ChangeNotifier {
     _shouldFitBounds = true;
     _updateState(_state.copyWith(
       pins: newPins, 
-      routeSegments: List<RouteSegment>.from(segments) // 💡 명시적 리스트 교체로 지도 갱신 유도
+      routeSegments: List<RouteSegment>.from(segments), // 💡 명시적 리스트 교체로 지도 갱신 유도
+      updateTrigger: _state.updateTrigger + 1, // 💡 지도 강제 리빌드 트리거
     ));
   }
 

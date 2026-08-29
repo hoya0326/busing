@@ -29,17 +29,23 @@ Map<String, List<BusLineStation>> _initializeBusLines() {
   final Map<String, List<BusLineStation>> processed = {};
   
   allBusDetails.forEach((lineName, details) {
-    // 💡 [수석 개발자] 모든 노선에 대해 정밀한 구간 추출 (기점 <-> 종점)
     final upKey = "${lineName}_UP";
     final downKey = "${lineName}_DOWN";
     
+    // 💡 [수석 개발자] 가장 정확한 사용자 데이터(Full)에서 정류장 목록 확보
     List<BusLineStation>? rawStations = fullBusLines[upKey];
+    
+    // Fallback: 이름이 완벽히 일치하지 않는 경우 유연하게 매칭 (예: (계수초...) 등 생략된 이름)
+    if (rawStations == null) {
+      final baseName = lineName.replaceAll(RegExp(r'\(.*\)'), '');
+      rawStations = fullBusLines["${baseName}_UP"] ?? fullBusLines[baseName];
+    }
+
     if (rawStations == null) return; 
 
     String upTerminal = (details['DIR_UP_NAME'] ?? '').replaceAll(' ', '').replaceAll('아파트', '');
     String downTerminal = (details['DIR_DOWN_NAME'] ?? '').replaceAll(' ', '').replaceAll('아파트', '');
     
-    // 기점/종점 인덱스 찾기 (더 유연한 fuzzy 매칭)
     int startIdx = rawStations.indexWhere((s) {
       final name = s.stationName.replaceAll(' ', '').replaceAll('아파트', '');
       return name.contains(upTerminal) || upTerminal.contains(name);
@@ -50,18 +56,14 @@ Map<String, List<BusLineStation>> _initializeBusLines() {
       return name.contains(downTerminal) || downTerminal.contains(name);
     });
     
-    // 만약 못 찾았다면 전체 리스트 사용하되, 기점은 0, 종점은 마지막으로 기본값 세팅
     List<BusLineStation> upSegment;
     if (startIdx != -1 && endIdx != -1) {
       if (startIdx <= endIdx) {
         upSegment = rawStations.sublist(startIdx, endIdx + 1);
       } else {
-        // 순서가 역전된 경우 (데이터 소스가 하행 기준일 때 등)
         upSegment = rawStations.sublist(endIdx, startIdx + 1).reversed.toList();
       }
     } else {
-      // 💡 [수석 개발자] 인덱스를 찾지 못한 경우 안전하게 전체 리스트 반환
-      debugPrint('⚠️ [Data] $lineName 기/종점 인덱스 매칭 실패 (Start: $startIdx, End: $endIdx)');
       upSegment = rawStations;
     }
 
@@ -72,7 +74,6 @@ Map<String, List<BusLineStation>> _initializeBusLines() {
     final startBase = (int.tryParse(startParts[0]) ?? 5) * 60 + (int.tryParse(startParts[1]) ?? 40);
     final endBase = (int.tryParse(endParts[0]) ?? 22) * 60 + (int.tryParse(endParts[1]) ?? 30);
 
-    // 💡 상행 노선 생성 및 시간 주입
     processed[upKey] = List.generate(upSegment.length, (index) {
       final s = upSegment[index];
       return BusLineStation(
@@ -88,7 +89,6 @@ Map<String, List<BusLineStation>> _initializeBusLines() {
       );
     });
 
-    // 💡 하행 노선 생성 (상행의 역순 + 시간 재계산)
     final List<BusLineStation> downSegment = processed[upKey]!.reversed.toList();
     processed[downKey] = List.generate(downSegment.length, (index) {
       final s = downSegment[index];
