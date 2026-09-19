@@ -1,3 +1,4 @@
+import 'dart:async'; // 💡 unawaited 사용을 위해 추가
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
@@ -10,9 +11,14 @@ import 'screens/home_screen.dart';
 import 'screens/schedule_screen.dart';
 import 'screens/notification_screen.dart';
 import 'screens/profile_screen.dart';
+import 'services/notification_service.dart'; // 💡 추가
 
 void main() async {
+  debugPrint('🚀 [System] 앱 시작 프로세스 가동');
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // 알림 서비스 초기화
+  await NotificationService().init();
 
   try {
     // 1. .env 파일 로드
@@ -20,9 +26,11 @@ void main() async {
 
     // 2. 환경 변수에서 키를 가져오고 .trim()으로 보이지 않는 공백/줄바꿈 제거
     String kakaoKey = (dotenv.env['KAKAO_NATIVE_APP_KEY'] ?? '').trim();
+    String tmapKey = (dotenv.env['TMAP_API_KEY'] ?? '').trim();
 
     // 디버깅용: 콘솔에 키가 정상적으로 찍히는지 확인
-    debugPrint('🔑 [Debug] 불러온 카카오 키 확인: ${kakaoKey.isNotEmpty ? "성공 (글자수: ${kakaoKey.length})" : "실패(비어있음)"}');
+    debugPrint('🔑 [Debug] 카카오 키 확인: ${kakaoKey.isNotEmpty ? "성공" : "실패"}');
+    debugPrint('🔑 [Debug] Tmap 키 확인: ${tmapKey.isNotEmpty ? "성공" : "실패"}');
 
     // 3. 카카오 지도 초기화
     AuthRepository.initialize(appKey: kakaoKey);
@@ -34,8 +42,11 @@ void main() async {
   await storageService.init();
 
   final appProvider = AppProvider(storageService);
-  await appProvider.loadRoutines();
-  await appProvider.loadProfile();
+  
+  // 💡 [수석 개발자] 앱 부팅 속도 개선: 데이터 로딩을 비동기로 전환하여 첫 화면 진입 차단 방지
+  unawaited(appProvider.loadRoutines());
+  unawaited(appProvider.loadProfile());
+  unawaited(appProvider.loadFavoritePlaces());
 
   runApp(
     MultiProvider(
@@ -53,14 +64,41 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final appProvider = context.watch<AppProvider>();
+    
     return MaterialApp.router(
       title: 'Routine Bus',
       debugShowCheckedModeBanner: false,
+      themeMode: appProvider.darkMode ? ThemeMode.dark : ThemeMode.light,
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+        brightness: Brightness.light,
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue, brightness: Brightness.light),
         useMaterial3: true,
         fontFamily: 'Inter',
+        scaffoldBackgroundColor: const Color(0xFFFDFBF7), // 💡 좀 더 편안한 아이보리 배경
       ),
+      darkTheme: ThemeData(
+        brightness: Brightness.dark,
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue, brightness: Brightness.dark),
+        useMaterial3: true,
+        fontFamily: 'Inter',
+        scaffoldBackgroundColor: const Color(0xFF0F1117),
+      ),
+      builder: (context, child) {
+        // 💡 [Figma] 전역 폰트 크기 변환 규칙 적용
+        final mediaQueryData = MediaQuery.of(context);
+        final scaleFactor = mediaQueryData.textScaler.scale(1.0);
+        
+        // fontScaleDelta가 -5, 0, 5 일 때 적절한 배율로 환산 (약 0.8, 1.0, 1.2)
+        double customScale = 1.0 + (appProvider.state.fontScaleDelta / 25.0);
+
+        return MediaQuery(
+          data: mediaQueryData.copyWith(
+            textScaler: TextScaler.linear(scaleFactor * customScale),
+          ),
+          child: child!,
+        );
+      },
       routerConfig: _router,
     );
   }
@@ -75,7 +113,7 @@ final _router = GoRouter(
         GoRoute(path: '/', builder: (context, state) => const HomeScreen()),
         GoRoute(path: '/schedule', builder: (context, state) => const ScheduleScreen()),
         GoRoute(path: '/notification', builder: (context, state) => const NotificationScreen()),
-        GoRoute(path: '/profile', builder: (context, state) => const ProfileScreen()),
+        GoRoute(path: '/profile', builder: (context, state) => const SettingsScreen()),
       ],
     ),
   ],
