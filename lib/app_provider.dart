@@ -152,6 +152,17 @@ class AppProvider extends ChangeNotifier {
   Future<void> _checkLastBusForAlarms() async {
     if (_destinationAlarms.isEmpty) return;
     
+    // 💡 [수석 개발자] 막차 트래킹 가동 시간대: 18:00(오후 6시) ~ 00:00(자정)
+    final now = DateTime.now();
+    final hour = now.hour;
+    final minute = now.minute;
+    final isLastBusTrackingTime = (hour >= 18);
+
+    if (!isLastBusTrackingTime) {
+      debugPrint('🌙 [LastBus] 현재 시간대(${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')})는 대기 시간입니다. (18:00 ~ 00:00 사이에만 가동)');
+      return;
+    }
+    
     final currentPos = _state.pins.firstWhere((p) => p.type == PinType.depart, 
       orElse: () => MapPin(x: 35.1601, y: 126.8515, type: PinType.depart));
     
