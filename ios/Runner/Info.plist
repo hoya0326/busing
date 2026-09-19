@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Busing</string>
+	<string>busing</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -16,6 +16,19 @@
 	<string>6.0</string>
 	<key>CFBundleName</key>
 	<string>busing</string>
+
+	<!-- 💡 [iOS] 위치 권한 안내 문구 (GPS 도보 시간 및 현위치 매핑용) -->
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>현재 위치를 기반으로 도보 소요 시간 및 정류장 경로를 탐색하기 위해 위치 권한이 필요합니다.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>실시간 경로 안내 및 출발/막차 알림을 위해 위치 정보가 필요합니다.</string>
+
+	<!-- 💡 [iOS] HTTP 통신 허용 (공공데이터 BIS 및 Tmap API 통신용) -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
