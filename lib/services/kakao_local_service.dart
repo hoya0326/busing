@@ -53,6 +53,7 @@ class KakaoLocalService {
         final data = json.decode(response.body);
         final List docs = data['documents'];
         return docs.map((d) => {
+          'id': d['id'],
           'name': d['place_name'],
           'address': d['address_name'],
           'lat': double.parse(d['y']),

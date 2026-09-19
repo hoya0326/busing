@@ -10,8 +10,10 @@ class RootLayout extends StatelessWidget {
   Widget build(BuildContext context) {
     final location = GoRouterState.of(context).uri.path;
 
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Scaffold(
-      backgroundColor: const Color(0xFF111827),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: Stack(
         children: [
           Positioned.fill(
@@ -43,10 +45,12 @@ class _BottomTabBar extends StatelessWidget {
       {'path': '/profile', 'label': '프로필', 'icon': Icons.person_outline},
     ];
 
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.97),
-        border: Border(top: BorderSide(color: Colors.black.withOpacity(0.07))),
+        color: isDark ? const Color(0xFF1A1E2E) : const Color(0xFFFDFBF7).withOpacity(0.97),
+        border: Border(top: BorderSide(color: isDark ? Colors.white10 : Colors.black.withOpacity(0.07))),
       ),
       padding: EdgeInsets.only(bottom: MediaQuery.of(context).padding.bottom),
       child: Row(
@@ -67,13 +71,13 @@ class _BottomTabBar extends StatelessWidget {
                     width: 32,
                     height: 32,
                     decoration: BoxDecoration(
-                      color: isActive ? const Color(0xFF111827) : Colors.transparent,
+                      color: isActive ? (isDark ? const Color(0xFF3D7EFF) : const Color(0xFF111827)) : Colors.transparent,
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Icon(
                       icon,
                       size: 17,
-                      color: isActive ? const Color(0xFF39FF14) : const Color(0xFF9CA3AF),
+                      color: isActive ? (isDark ? Colors.white : const Color(0xFF39FF14)) : const Color(0xFF9CA3AF),
                     ),
                   ),
                   const SizedBox(height: 2),
@@ -82,7 +86,7 @@ class _BottomTabBar extends StatelessWidget {
                     style: TextStyle(
                       fontSize: 10,
                       fontWeight: isActive ? FontWeight.w700 : FontWeight.w400,
-                      color: isActive ? const Color(0xFF111827) : const Color(0xFF9CA3AF),
+                      color: isActive ? (isDark ? Colors.white : const Color(0xFF111827)) : const Color(0xFF9CA3AF),
                     ),
                   ),
                 ],

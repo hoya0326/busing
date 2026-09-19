@@ -44,6 +44,8 @@ class MapPin {
 // 사용자가 설정한 정기 이동 정보를 담습니다.
 class Routine {
   final int id;
+  final String? name; // 💡 추가: 루틴 이름
+  final String day; // 💡 요일 (월, 화, 수, 목, 금, 토, 일)
   final String time;
   final String from;
   final String to;
@@ -52,6 +54,8 @@ class Routine {
 
   Routine({
     required this.id,
+    this.name,
+    required this.day,
     required this.time,
     required this.from,
     required this.to,
@@ -61,6 +65,8 @@ class Routine {
 
   Map<String, dynamic> toJson() => {
     'id': id,
+    'name': name,
+    'day': day,
     'time': time,
     'from': from,
     'to': to,
@@ -70,6 +76,8 @@ class Routine {
 
   factory Routine.fromJson(Map<String, dynamic> json) => Routine(
     id: json['id'],
+    name: json['name'],
+    day: json['day'] ?? '월',
     time: json['time'],
     from: json['from'],
     to: json['to'],
@@ -86,6 +94,7 @@ class Place {
   final double lat;
   final double lng;
   final String address;
+  final String? alias; // 💡 추가: 사용자가 지정한 별칭
 
   Place({
     required this.id,
@@ -93,6 +102,7 @@ class Place {
     required this.lat,
     required this.lng,
     required this.address,
+    this.alias,
   });
 
   Map<String, dynamic> toJson() => {
@@ -101,14 +111,16 @@ class Place {
     'lat': lat,
     'lng': lng,
     'address': address,
+    'alias': alias,
   };
 
   factory Place.fromJson(Map<String, dynamic> json) => Place(
     id: json['id'],
     name: json['name'],
-    lat: json['lat'],
-    lng: json['lng'],
+    lat: (json['lat'] as num).toDouble(),
+    lng: (json['lng'] as num).toDouble(),
     address: json['address'],
+    alias: json['alias'],
   );
 }
 
@@ -215,6 +227,9 @@ class BusRouteInfo {
   final String? startStopName;    // 출발 정류장 이름
   final LatLng? startStopLatLng;  // 💡 추가: 출발 정류장 좌표
   final List<TransportLeg> legs;  // 💡 추가: 세부 구간 정보 (Atcha 포팅)
+  String? stopsRemaining;         // 💡 추가: 남은 정류장 개수 (예: 2개 전)
+  int? nextBusArrivalRemaining;   // 💡 추가: 다음 버스 도착 예정 시간 (분)
+  String? nextBusStopsRemaining;  // 💡 추가: 다음 버스 남은 정류장 수
   
   /// 💡 Atcha 포팅: 전체 경로의 도보 정보
   final int totalWalkTimeSeconds;
@@ -237,6 +252,9 @@ class BusRouteInfo {
     this.legs = const [], // 💡 추가됨
     this.totalWalkTimeSeconds = 0,
     this.totalWalkDistanceMeters = 0,
+    this.stopsRemaining,
+    this.nextBusArrivalRemaining,
+    this.nextBusStopsRemaining,
   }) {
     updateCalculatedFields();
   }
@@ -369,6 +387,55 @@ class BusStop {
   );
 }
 
+// ── 알람 및 버스 선택 모델 ──
+
+class BusAlarm {
+  final String busName;
+  final String lastBusTime;
+  final String interval;
+  bool isEnabled;
+
+  BusAlarm({
+    required this.busName,
+    required this.lastBusTime,
+    required this.interval,
+    this.isEnabled = true,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'busName': busName,
+    'lastBusTime': lastBusTime,
+    'interval': interval,
+    'isEnabled': isEnabled,
+  };
+
+  factory BusAlarm.fromJson(Map<String, dynamic> json) => BusAlarm(
+    busName: json['busName'],
+    lastBusTime: json['lastBusTime'],
+    interval: json['interval'],
+    isEnabled: json['isEnabled'] ?? true,
+  );
+}
+
+class DestinationAlarm {
+  final Place destination;
+  bool isEnabled;
+
+  DestinationAlarm({
+    required this.destination,
+    this.isEnabled = true,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'destination': destination.toJson(),
+    'isEnabled': isEnabled,
+  };
+
+  factory DestinationAlarm.fromJson(Map<String, dynamic> json) => DestinationAlarm(
+    destination: Place.fromJson(json['destination']),
+    isEnabled: json['isEnabled'] ?? true,
+  );
+}
 // ── 경로 시각화 모델 ──
 
 class RouteSegment {
@@ -376,13 +443,13 @@ class RouteSegment {
   final List<LatLng> points;
   final Color color;
   final double width;
-  final StrokeStyle strokeStyle; // 💡 추가됨
+  final StrokeStyle strokeStyle; 
 
   RouteSegment({
     required this.id,
     required this.points,
     required this.color,
-    this.width = 4.0, // 💡 [수석 개발자] 기본 두께를 4.0으로 하향 조정
-    this.strokeStyle = StrokeStyle.solid, // 💡 기본값 실선
+    this.width = 4.0, 
+    this.strokeStyle = StrokeStyle.solid, 
   });
 }

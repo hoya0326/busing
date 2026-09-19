@@ -20,39 +20,59 @@ class AppEmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Center(
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 40),
+        padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 40),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, size: 64, color: Colors.grey[300]),
+            Container(
+              width: 80, height: 80,
+              decoration: BoxDecoration(
+                color: isDark ? Colors.white.withOpacity(0.05) : Colors.black.withOpacity(0.03),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, size: 40, color: isDark ? Colors.white.withOpacity(0.2) : Colors.black12),
+            ),
             const SizedBox(height: 24),
             Text(
               title,
               textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF374151)),
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: isDark ? Colors.white : Colors.black87, letterSpacing: -0.5),
             ),
             if (message != null) ...[
               const SizedBox(height: 12),
               Text(
                 message!,
                 textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 14, color: Color(0xFF6B7280), height: 1.5),
+                style: TextStyle(fontSize: 14, color: isDark ? Colors.white.withOpacity(0.4) : Colors.black45, height: 1.5, fontWeight: FontWeight.w500),
               ),
             ],
             if (actionTitle != null && onAction != null) ...[
               const SizedBox(height: 32),
               SizedBox(
                 width: double.infinity,
-                child: FilledButton(
-                  onPressed: onAction,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: const Color(0xFF2563EB),
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                child: Container(
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(colors: [Color(0xFF3D7EFF), Color(0xFF6C5CE7)]),
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [BoxShadow(color: const Color(0xFF3D7EFF).withOpacity(0.3), blurRadius: 12, offset: const Offset(0, 4))],
                   ),
-                  child: Text(actionTitle!, style: const TextStyle(fontWeight: FontWeight.bold)),
+                  child: ElevatedButton(
+                    onPressed: onAction,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.transparent,
+                      shadowColor: Colors.transparent,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    ),
+                    child: Text(
+                      actionTitle!,
+                      style: const TextStyle(fontWeight: FontWeight.w900, color: Colors.white, fontSize: 16),
+                    ),
+                  ),
                 ),
               ),
             ],

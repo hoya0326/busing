@@ -9,6 +9,9 @@ class StorageService {
   static const String _favoritePlacesKey = 'favorite_places';
   static const String _recentSearchesKey = 'recent_searches'; // 💡 최근 검색어 키 추가
   static const String _allStationsKey = 'gwangju_stations';
+  static const String _alarmsKey = 'bus_alarms'; // 💡 기존 알람
+  static const String _destinationAlarmsKey = 'destination_alarms'; // 💡 신규 알람
+  static const String _darkModeKey = 'darkMode'; // 💡 다크모드 키 추가
 
   SharedPreferences? _prefs;
 
@@ -125,5 +128,43 @@ class StorageService {
 
   Future<void> setUserName(String name) async {
     await _instance.setString(_userNameKey, name);
+  }
+
+  // 💡 알람 저장 및 불러오기
+  Future<void> saveAlarms(List<BusAlarm> alarms) async {
+    final jsonString = json.encode(alarms.map((e) => e.toJson()).toList());
+    await _instance.setString(_alarmsKey, jsonString);
+  }
+
+  Future<List<BusAlarm>> getAlarms() async {
+    final jsonString = _instance.getString(_alarmsKey);
+    if (jsonString == null) return [];
+    try {
+      final List<dynamic> list = json.decode(jsonString);
+      return list.map((e) => BusAlarm.fromJson(e)).toList();
+    } catch (e) { return []; }
+  }
+
+  // 💡 목적지 알람 저장 및 불러오기
+  Future<void> saveDestinationAlarms(List<DestinationAlarm> alarms) async {
+    final jsonString = json.encode(alarms.map((e) => e.toJson()).toList());
+    await _instance.setString(_destinationAlarmsKey, jsonString);
+  }
+
+  Future<List<DestinationAlarm>> getDestinationAlarms() async {
+    final jsonString = _instance.getString(_destinationAlarmsKey);
+    if (jsonString == null) return [];
+    try {
+      final List<dynamic> list = json.decode(jsonString);
+      return list.map((e) => DestinationAlarm.fromJson(e)).toList();
+    } catch (e) { return []; }
+  }
+
+  Future<bool> getDarkMode() async {
+    return _instance.getBool(_darkModeKey) ?? true; // 💡 기본은 다크모드
+  }
+
+  Future<void> setDarkMode(bool val) async {
+    await _instance.setBool(_darkModeKey, val);
   }
 }
