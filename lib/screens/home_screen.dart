@@ -1,17 +1,20 @@
+import 'dart:ui';
 import 'dart:async';
-import 'dart:math' as Math; // 💡 추가
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter/services.dart'; 
 import 'package:kakao_map_plugin/kakao_map_plugin.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter_compass/flutter_compass.dart';
 import 'package:provider/provider.dart';
 import '../app_provider.dart';
 import '../models.dart';
-import '../data/bus_schedules.dart'; // 💡 추가
+import '../data/bus_schedules.dart';
 import '../widgets/app_card.dart';
-import '../widgets/app_empty_state.dart'; // 💡 추가
+import '../widgets/app_empty_state.dart';
+import 'route_preview_screen.dart'; 
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -33,9 +36,9 @@ class _HomeScreenState extends State<HomeScreen> {
   StreamSubscription<CompassEvent>? _compassStream;
 
   bool _isFirstLocationSync = true;
+  bool _stopsExpanded = false; 
   final ValueNotifier<double> _sheetExtent = ValueNotifier<double>(0.4);
   
-  // 💡 [수석 개발자] 시트 내 내용물 스크롤을 위한 독립적인 컨트롤러 추가
   final ScrollController _internalSheetScrollController = ScrollController();
 
   @override
@@ -49,7 +52,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _positionStream?.cancel();
     _compassStream?.cancel();
     _sheetExtent.dispose();
-    _internalSheetScrollController.dispose(); // 💡 해제 추가
+    _internalSheetScrollController.dispose();
     super.dispose();
   }
 
@@ -107,14 +110,11 @@ class _HomeScreenState extends State<HomeScreen> {
       _isFirstLocationSync = false;
       context.read<AppProvider>().updateDefaultPlacesWithLocation(lat, lng);
     }
-
-    // 💡 지도 자동 이동 제거
   }
 
   List<CustomOverlay> _generateOverlays(AppProvider appProvider) {
     List<CustomOverlay> overlays = [];
 
-    // 1. 현재 위치/방향 마커 (항상 표시)
     if (_currentPosition != null) {
       overlays.add(CustomOverlay(
         customOverlayId: '방향_마커',
@@ -132,7 +132,6 @@ class _HomeScreenState extends State<HomeScreen> {
       ));
     }
 
-    // 2. 목적지 및 출발지 마커 (항상 표시)
     for (var pin in appProvider.pins) {
       if (pin.type == PinType.arrive) {
         overlays.add(CustomOverlay(
@@ -140,7 +139,7 @@ class _HomeScreenState extends State<HomeScreen> {
           latLng: LatLng(pin.x, pin.y),
           content: '''
             <div style="display: flex; flex-direction: column; align-items: center;">
-              <div style="background: #DC2626; color: white; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: bold; margin-bottom: 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">목적지</div>
+              <div style="background: #DC2626; color: white; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: bold; margin-bottom: 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">${pin.label ?? '목적지'}</div>
               <svg width="30" height="30" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M12 21C16 17.5 19 14.4183 19 10C19 6.13401 15.866 3 12 3C8.13401 3 5 6.13401 5 10C5 14.4183 8 17.5 12 21Z" fill="#DC2626" stroke="white" stroke-width="2"/>
                 <circle cx="12" cy="10" r="3" fill="white"/>
@@ -169,7 +168,6 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     }
 
-    // 4. 주요 정류장 (승차/하차/환승 - 항상 표시)
     final busStops = appProvider.pins.where((p) => p.type == PinType.busStop).toList();
     for (var pin in busStops) {
       final type = pin.address; 
@@ -179,18 +177,16 @@ class _HomeScreenState extends State<HomeScreen> {
       else if (type == 'alighting') { actionLabel = '하차'; color = const Color(0xFF2563EB); }
       else if (type == 'transfer') { actionLabel = '환승'; color = const Color(0xFFF59E0B); }
       
-      // 💡 [Request] 액션 라벨(승차/하차)과 정류장 이름을 함께 표시
       overlays.add(_buildStopOverlay(
         pin, 
         actionLabel, 
         color, 
         showLabel: true,
-        subLabel: pin.label, // 💡 정류장 이름 전달
+        // 💡 [수석 개발자] 지도 레벨 3 이하(더 가까운 줌)에서만 정류장 이름 노출
+        subLabel: _currentZoomLevel <= 3 ? pin.label : null, 
       ));
     }
 
-    // 5. 일반 경유 정류장 (줌 레벨에 따라 표시)
-    // 💡 [Request] 지도 5레벨 이하(더 확대된 상태)에서만 경유 정류장 이름이 보이도록 조정
     if (_currentZoomLevel <= 5) { 
       final passStops = appProvider.pins.where((p) => p.type == PinType.passStop).toList();
       for (var pin in passStops) {
@@ -198,8 +194,10 @@ class _HomeScreenState extends State<HomeScreen> {
           pin, 
           pin.label ?? '정류장', 
           const Color(0xFF6B7280), 
-          showLabel: true,
-          mini: false, 
+          // 💡 [수석 개발자] 경로 탐색 직후 지도가 복잡해지지 않도록 경유 정류장 이름은 기본적으로 숨김
+          // 지도 레벨 2 이하(매우 정밀)일 때만 노출
+          showLabel: _currentZoomLevel <= 2,
+          mini: true, 
         ));
       }
     }
@@ -208,35 +206,14 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   CustomOverlay _buildStopOverlay(MapPin pin, String label, Color color, {bool showLabel = true, bool mini = false, String? subLabel}) {
+    final hexColor = colorToHex(color);
     return CustomOverlay(
       customOverlayId: 'stop_${pin.x}_${pin.y}_${label}_${subLabel ?? ""}',
       latLng: LatLng(pin.x, pin.y),
       content: '''
         <div style="display: flex; flex-direction: column; align-items: center; cursor: pointer; transform: scale(${mini ? 0.8 : 0.9});">
-          ${showLabel ? '''
-            <div style="display: flex; flex-direction: column; align-items: center;">
-              ${subLabel != null ? '''
-                <div style="background: white; color: ${colorToHex(color)}; 
-                  padding: 1px 4px; border-radius: 3px; font-size: 9px; 
-                  font-weight: bold; margin-bottom: 1px; box-shadow: 0 1px 2px rgba(0,0,0,0.15);
-                  border: 1px solid ${colorToHex(color)}; white-space: nowrap;">
-                  $subLabel
-                </div>''' : ''}
-              <div style="background: ${colorToHex(color)}; color: white; 
-                padding: ${mini ? '1px 4px' : '2px 7px'}; 
-                border-radius: 10px; 
-                font-size: ${mini ? '8px' : '10px'}; 
-                font-weight: bold; margin-bottom: 1px; 
-                box-shadow: 0 1px 3px rgba(0,0,0,0.15); white-space: nowrap; 
-                border: 1px solid rgba(255,255,255,0.2);
-                opacity: ${mini ? '0.75' : '1.0'};">
-                $label
-              </div>
-            </div>''' : ''}
-          <div style="width: ${mini ? '6px' : '10px'}; height: ${mini ? '6px' : '10px'}; 
-            background: white; border-radius: 50%; 
-            border: ${mini ? '1.5px' : '2.5px'} solid ${colorToHex(color)}; 
-            box-shadow: 0 1px 3px rgba(0,0,0,0.15);"></div>
+          ${showLabel ? '<div style="display: flex; flex-direction: column; align-items: center;">' + (subLabel != null ? '<div style="background: white; color: $hexColor; padding: 1px 4px; border-radius: 3px; font-size: 9px; font-weight: bold; margin-bottom: 1px; box-shadow: 0 1px 2px rgba(0,0,0,0.15); border: 1px solid $hexColor; white-space: nowrap;">$subLabel</div>' : '') + '<div style="background: $hexColor; color: white; padding: ${mini ? "1px 4px" : "2px 7px"}; border-radius: 10px; font-size: ${mini ? "8px" : "10px"}; font-weight: bold; margin-bottom: 1px; box-shadow: 0 1px 3px rgba(0,0,0,0.15); white-space: nowrap; border: 1px solid rgba(255,255,255,0.2); opacity: ${mini ? "0.75" : "1.0"};">$label</div></div>' : ''}
+          <div style="width: ${mini ? '6px' : '10px'}; height: ${mini ? '6px' : '10px'}; background: white; border-radius: 50%; border: ${mini ? '1.5px' : '2.5px'} solid $hexColor; box-shadow: 0 1px 3px rgba(0,0,0,0.15);"></div>
         </div>
       ''',
       xAnchor: 0.5, yAnchor: 0.9,
@@ -286,7 +263,6 @@ class _HomeScreenState extends State<HomeScreen> {
     final centerLat = (p1.latitude + p2.latitude) / 2;
     final centerLng = (p1.longitude + p2.longitude) / 2;
     
-    // 두 좌표 간의 거리 계산 (단순 차이 기반 줌 레벨 산출)
     final latDiff = (p1.latitude - p2.latitude).abs();
     final lngDiff = (p1.longitude - p2.longitude).abs();
     final maxDiff = latDiff > lngDiff ? latDiff : lngDiff;
@@ -299,11 +275,8 @@ class _HomeScreenState extends State<HomeScreen> {
     else if (maxDiff > 0.005) optimalLevel = 4;
     else optimalLevel = 3;
 
-    // 💡 [수석 개발자] 경로선이 즉시 뜨지 않는 현상을 해결하기 위해 
-    // 지도 중심점과 레벨을 순차적으로 업데이트하여 네이티브 뷰 리페인팅을 강제 유도합니다.
     mapController!.setCenter(LatLng(centerLat, centerLng));
     
-    // 0.1초 뒤에 줌 레벨을 조절하여 확실하게 선이 그려지도록 조치
     Future.delayed(const Duration(milliseconds: 100), () {
       if (mounted && mapController != null) {
         mapController!.setLevel(optimalLevel);
@@ -314,58 +287,53 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  Widget _buildServiceEndedWidget(String? customMessage) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 40),
-      width: double.infinity,
-      child: Column(
-        children: [
-          Icon(Icons.info_outline, size: 48, color: Colors.blue[200]),
-          const SizedBox(height: 16),
-          Text(
-            customMessage ?? '현재 버스 운행 정보가 없습니다',
-            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF4B5563)),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 8),
-          const Text('내일 새벽 5시부터 다시 운행합니다.', style: TextStyle(color: Colors.grey)),
-        ],
-      ),
-    );
-  }
-
   Widget _buildArrivalListTile(BusRouteInfo bus) {
     final appProvider = context.read<AppProvider>();
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      leading: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(color: const Color(0xFF1E3A8A), borderRadius: BorderRadius.circular(8)),
-        child: Text(bus.busName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: isDark ? Colors.white.withOpacity(0.05) : Colors.black.withOpacity(0.03),
+        borderRadius: BorderRadius.circular(16),
       ),
-      title: Text(
-        bus.busArrivalRemaining == -2 ? '운행 종료' : 
-        (bus.busArrivalRemaining == -1 ? '실시간 정보 없음' : '${bus.busArrivalRemaining}분 뒤 도착'), 
-        style: const TextStyle(fontWeight: FontWeight.bold)
-      ),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // 💡 [Request] "시간표" -> "정보" 버튼으로 변경 및 하단 시트 전환
-          TextButton(
-            onPressed: () {
-              appProvider.openBusLineInfo(bus.busName);
-            },
-            child: const Text('정보', style: TextStyle(color: Color(0xFF2563EB), fontSize: 13)),
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        leading: Container(
+          width: 52,
+          height: 36,
+          decoration: BoxDecoration(
+            color: const Color(0xFF3D7EFF).withOpacity(0.15),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: const Color(0xFF3D7EFF).withOpacity(0.3)),
           ),
-          Text(bus.statusText, style: TextStyle(color: bus.statusColor, fontWeight: FontWeight.bold)),
-        ],
+          child: Center(
+            child: Text(
+              bus.busName,
+              style: const TextStyle(color: Color(0xFF3D7EFF), fontWeight: FontWeight.w900, fontSize: 14),
+            ),
+          ),
+        ),
+        title: Text(
+          bus.busArrivalRemaining == -2 ? '운행 종료' : 
+          (bus.busArrivalRemaining == -1 ? '실시간 정보 없음' : '${bus.busArrivalRemaining}분 뒤 도착'), 
+          style: TextStyle(color: isDark ? Colors.white : Colors.black, fontWeight: FontWeight.w900, fontSize: 16)
+        ),
+        subtitle: Text(
+          bus.stopsRemaining ?? (bus.busArrivalRemaining == -2 ? '운행 종료' : ''),
+          style: TextStyle(
+            color: bus.busArrivalRemaining == -2 ? Colors.red : const Color(0xFF3D7EFF), 
+            fontWeight: FontWeight.bold, 
+            fontSize: 12
+          ),
+        ),
+        trailing: IconButton(
+          onPressed: () => appProvider.openBusLineInfo(bus.busName),
+          icon: Icon(Icons.info_outline, color: isDark ? const Color(0xFF555D7A) : Colors.black26, size: 20),
+        ),
       ),
     );
   }
 
-
-  /// 💡 [New Request] 버스 정류장 목록 뷰 (2번 사진)
   Widget _buildBusStopListView(AppProvider appProvider) {
     final stations = appProvider.state.activeLineStations;
     final busName = appProvider.state.activeBusName ?? '';
@@ -374,11 +342,11 @@ class _HomeScreenState extends State<HomeScreen> {
     final dirTitle = direction == 'UP' 
         ? (details?['DIR_UP_NAME'] ?? '상행') 
         : (details?['DIR_DOWN_NAME'] ?? '하행');
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 상단 헤더 (이미지 재현)
         Row(
           children: [
             Container(
@@ -387,29 +355,28 @@ class _HomeScreenState extends State<HomeScreen> {
               child: const Text('간선', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
             ),
             const SizedBox(width: 8),
-            Text(busName, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
+            Text(busName, style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: isDark ? Colors.white : Colors.black87)),
             const Spacer(),
             IconButton(
-              icon: const Icon(Icons.close, size: 24, color: Colors.black54),
+              icon: Icon(Icons.close, size: 24, color: isDark ? Colors.white54 : Colors.black54),
               onPressed: () => appProvider.setBarMode(WidgetBarMode.main),
             ),
           ],
         ),
         const SizedBox(height: 10),
         
-        // 방향 전환 버튼 및 현재 방향 표시
         GestureDetector(
           onTap: () => appProvider.switchBusDirection(),
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
-              color: const Color(0xFFF3F4F6),
+              color: isDark ? const Color(0xFF242836) : Colors.black.withOpacity(0.05),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text('$dirTitle 방면', style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF374151))),
+                Text('$dirTitle 방면', style: TextStyle(fontWeight: FontWeight.bold, color: isDark ? Colors.white70 : Colors.black87)),
                 const SizedBox(width: 6),
                 const Icon(Icons.swap_vert, size: 16, color: Color(0xFF6B7280)),
               ],
@@ -426,7 +393,6 @@ class _HomeScreenState extends State<HomeScreen> {
             return Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // 타임라인 선 (이미지 스타일 재현)
                 SizedBox(
                   width: 40,
                   child: Column(
@@ -435,7 +401,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       Container(
                         width: 12, height: 12,
                         decoration: BoxDecoration(
-                          color: Colors.white, shape: BoxShape.circle,
+                          color: isDark ? const Color(0xFF1A1E2E) : Colors.white, shape: BoxShape.circle,
                           border: Border.all(color: const Color(0xFFFBBF24), width: 3),
                         ),
                       ),
@@ -448,11 +414,11 @@ class _HomeScreenState extends State<HomeScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const SizedBox(height: 14),
-                      Text(s.stationName, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Color(0xFF111827))),
+                      Text(s.stationName, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: isDark ? Colors.white : Colors.black87)),
                       const SizedBox(height: 2),
-                      Text('${s.firstBusTime} - ${s.lastBusTime}', style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280), fontWeight: FontWeight.w500)),
+                      Text('${s.firstBusTime} - ${s.lastBusTime}', style: TextStyle(fontSize: 13, color: isDark ? const Color(0xFF6B7280) : Colors.black45, fontWeight: FontWeight.w500)),
                       const SizedBox(height: 14),
-                      if (index != stations.length - 1) const Divider(height: 1, color: Color(0xFFF3F4F6)),
+                      if (index != stations.length - 1) Divider(height: 1, color: isDark ? Colors.white10 : Colors.black.withOpacity(0.05)),
                     ],
                   ),
                 ),
@@ -461,7 +427,6 @@ class _HomeScreenState extends State<HomeScreen> {
           }),
           
         const SizedBox(height: 30),
-        // 하단 고정 버튼
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: [
@@ -473,7 +438,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  /// 💡 [New Request] 두 종점 방향 통합 시간표 뷰 (3번 사진 스타일)
   Widget _buildDualScheduleView(AppProvider appProvider) {
     final busName = appProvider.state.activeBusName ?? '';
     final schedules = appProvider.getBusSchedules(busName);
@@ -522,13 +486,12 @@ class _HomeScreenState extends State<HomeScreen> {
     
     return Column(
       children: [
-        // 종점 헤더
         Row(
           children: schedules.map((s) => Expanded(
             child: Container(
               padding: const EdgeInsets.all(8),
               margin: const EdgeInsets.symmetric(horizontal: 2),
-              decoration: const BoxDecoration(color: Color(0xFF00C7FF)), // 이미지의 하늘색
+              decoration: const BoxDecoration(color: Color(0xFF00C7FF)), 
               child: Text(s.startStation, 
                 style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11),
                 textAlign: TextAlign.center, overflow: TextOverflow.ellipsis),
@@ -556,7 +519,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  /// 💡 [New Request] 노선 상세 정보 뷰 (4번 사진 스타일)
   Widget _buildLineDetailInfoView(AppProvider appProvider) {
     final details = appProvider.state.activeBusDetails;
     final busName = appProvider.state.activeBusName ?? '';
@@ -575,7 +537,6 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         const SizedBox(height: 20),
         
-        // 초정밀 안내 박스
         Container(
           width: double.infinity,
           padding: const EdgeInsets.all(16),
@@ -633,174 +594,439 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildBusRouteCard(BusRouteInfo route, int index, bool isSelected, AppProvider appProvider) {
-    return AppCard(
-      padding: const EdgeInsets.all(18),
-      borderColor: isSelected ? route.statusColor : const Color(0xFFE5E7EB),
-      backgroundColor: isSelected ? route.statusColor.withOpacity(0.05) : Colors.white,
-      onTap: () {
-        appProvider.selectRoute(index);
-      },
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final borderColor = route.statusColor.withOpacity(isSelected ? 0.85 : 0.45);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      child: GestureDetector(
+        onTap: () => appProvider.selectRoute(index),
+        child: Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: isSelected ? route.statusColor.withOpacity(0.12) : (isDark ? Colors.white.withOpacity(0.05) : const Color(0xFFFDFBF7)),
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(
+              color: borderColor,
+              width: isSelected ? 2.0 : 1.5,
+            ),
+            boxShadow: isDark ? [] : [
+              BoxShadow(
+                color: route.statusColor.withOpacity(0.1),
+                blurRadius: 8,
+                offset: const Offset(0, 3),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                route.busName,
-                style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: Color(0xFF111827)),
-              ),
-              const SizedBox(width: 10),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: route.statusColor,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  route.statusText,
-                  style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
-                ),
-              ),
-              const Spacer(),
-              IconButton(
-                onPressed: () => appProvider.registerDepartureAlarm(context, route),
-                icon: Icon(Icons.notifications_active_outlined, color: route.statusColor),
-                tooltip: '알림 예약',
-              ),
               Row(
                 children: [
-                  Icon(Icons.access_time, size: 16, color: route.statusColor),
-                  const SizedBox(width: 4),
                   Text(
-                    '${route.totalDuration}분',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: route.statusColor),
+                    route.busName,
+                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900, color: isDark ? Colors.white : Colors.black, letterSpacing: -0.5),
+                  ),
+                  const SizedBox(width: 12),
+                  if (route.stopsRemaining != null)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF3D7EFF).withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        route.stopsRemaining!,
+                        style: const TextStyle(color: Color(0xFF3D7EFF), fontSize: 11, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  const Spacer(),
+                  IconButton(
+                    onPressed: () => appProvider.registerDepartureAlarm(context, route),
+                    icon: Icon(Icons.notifications_active_outlined, color: route.statusColor, size: 20),
+                    constraints: const BoxConstraints(),
+                    padding: EdgeInsets.zero,
                   ),
                 ],
               ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Text(
-                route.busArrivalRemaining == -2
-                    ? '운행 종료'
-                    : (route.busArrivalRemaining == -1 ? '실시간 정보 없음' : '${route.busArrivalRemaining}분 남음'),
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: route.statusColor),
+              const SizedBox(height: 12),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    route.busArrivalRemaining == -2
+                        ? '운행 종료'
+                        : (route.busArrivalRemaining == -1 ? '실시간 정보 없음' : '${route.busArrivalRemaining}분 남음'),
+                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: route.statusColor, letterSpacing: -0.5),
+                  ),
+                  const SizedBox(width: 8),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 3),
+                    child: Text(
+                      '· 도보 ${route.walkTimeRemaining}분',
+                      style: TextStyle(fontSize: 13, color: isDark ? Colors.white.withOpacity(0.4) : Colors.black38, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  const Spacer(),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(color: isDark ? Colors.white.withOpacity(0.05) : Colors.black.withOpacity(0.03), borderRadius: BorderRadius.circular(12)),
+                    child: Row(
+                      children: [
+                        Icon(Icons.access_time, size: 14, color: isDark ? Colors.white70 : Colors.black54),
+                        const SizedBox(width: 4),
+                        Text(
+                          '${route.totalDuration}분',
+                          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900, color: isDark ? Colors.white : Colors.black),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(width: 12),
-              TextButton.icon(
-                onPressed: () {
-                  // 💡 [Request] "시간표 보기" -> "정보" 버튼으로 변경 및 하단 시트 전환
-                  appProvider.openBusLineInfo(route.busName);
-                },
-                icon: const Icon(Icons.info_outline, size: 16),
-                label: const Text('정보', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
-                style: TextButton.styleFrom(
-                  foregroundColor: const Color(0xFF2563EB),
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
+              if (route.routeDescription.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  width: double.infinity,
+                  decoration: BoxDecoration(
+                    color: isDark ? Colors.black.withOpacity(0.2) : Colors.black.withOpacity(0.02),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Text(
+                    route.routeDescription,
+                    style: TextStyle(fontSize: 13, color: isDark ? Colors.white.withOpacity(0.6) : Colors.black54, height: 1.4, fontWeight: FontWeight.w500),
+                  ),
                 ),
-              ),
+              ],
             ],
           ),
-          const SizedBox(height: 4),
-          Text(
-            '정류장까지 도보 ${route.walkTimeRemaining}분',
-            style: const TextStyle(fontSize: 14, color: Color(0xFF6B7280), fontWeight: FontWeight.w500),
-          ),
-          if (route.routeDescription.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              width: double.infinity,
-              decoration: BoxDecoration(
-                color: Colors.grey[50],
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: Colors.grey[200]!),
-              ),
-              child: Text(
-                route.routeDescription,
-                style: const TextStyle(fontSize: 13, color: Color(0xFF4B5563), height: 1.4, fontWeight: FontWeight.w400),
-              ),
-            ),
-          ],
-        ],
+        ),
       ),
     );
   }
 
   Widget _buildSearchHeader(AppProvider appProvider) {
+    final bool isNavActive = appProvider.isGuidanceActive;
+    final List<Place> extras = appProvider.state.extraDestinations;
+    final bool isStopsExpanded = appProvider.state.isStopsExpanded;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Column(
+      children: [
+        Container(
+          margin: const EdgeInsets.only(bottom: 8),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: isDark ? Colors.white.withOpacity(0.12) : Colors.black.withOpacity(0.05)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(isDark ? 0.4 : 0.1),
+                blurRadius: 24,
+                offset: const Offset(0, 12),
+              )
+            ],
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(24),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+              child: Container(
+                color: isDark ? const Color(0xFF1A1E2E).withOpacity(0.8) : Colors.white.withOpacity(0.9),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: GestureDetector(
+                              onTap: () => !isNavActive ? _openSearchLayer(context, appProvider, isDepart: true) : null,
+                              child: _buildSearchField(
+                                appProvider.departLabel,
+                                const Color(0xFF3D7EFF),
+                                glowColor: const Color(0xFF3D7EFF).withOpacity(0.6),
+                              ),
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 4),
+                            child: extras.isNotEmpty
+                              ? _buildStopsToggleButton(isStopsExpanded, () => appProvider.toggleStopsExpanded())
+                              : IconButton(
+                                  onPressed: () => !isNavActive ? _swapLocations(appProvider) : null,
+                                  icon: Icon(Icons.swap_vert_rounded, color: isDark ? Colors.white.withOpacity(0.3) : Colors.black26, size: 20),
+                                  constraints: const BoxConstraints(),
+                                  padding: const EdgeInsets.all(8),
+                                ),
+                          ),
+                          Expanded(
+                            child: GestureDetector(
+                              onTap: () => !isNavActive ? _openSearchLayer(context, appProvider, isDepart: false) : null,
+                              child: _buildSearchField(
+                                appProvider.arriveLabel.isEmpty ? '어디로 가시나요?' : appProvider.arriveLabel,
+                                const Color(0xFFFF6B6B),
+                                glowColor: const Color(0xFFFF6B6B).withOpacity(0.6),
+                                isDest: true,
+                              ),
+                            ),
+                          ),
+                          if ((appProvider.arriveLabel.isNotEmpty || appProvider.departLabel != '현재 위치') && !isNavActive)
+                            IconButton(
+                              onPressed: () => appProvider.clearCurrentRoute(),
+                              icon: Container(
+                                padding: const EdgeInsets.all(4),
+                                decoration: BoxDecoration(
+                                  color: isDark ? Colors.white.withOpacity(0.1) : Colors.black.withOpacity(0.05),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(Icons.close, color: isDark ? Colors.white70 : Colors.black54, size: 14),
+                              ),
+                              constraints: const BoxConstraints(),
+                              padding: const EdgeInsets.only(left: 8),
+                            ),
+                        ],
+                      ),
+                    ),
+                    if (extras.isNotEmpty && isStopsExpanded)
+                      Container(
+                        decoration: BoxDecoration(
+                          border: Border(top: BorderSide(color: Colors.white.withOpacity(0.05))),
+                        ),
+                        child: Column(
+                          children: List.generate(extras.length, (index) => _buildStopRow(index, extras[index].name, !isNavActive, () {
+                            appProvider.removeExtraDestination(index);
+                          })),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+        if (isNavActive)
+          _buildNavigatingBanner(appProvider),
+      ],
+    );
+  }
+
+  Widget _buildStopsToggleButton(bool expanded, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 28, height: 28,
+        decoration: BoxDecoration(
+          color: expanded ? const Color(0xFF3D7EFF) : const Color(0xFF3D7EFF).withOpacity(0.15),
+          shape: BoxShape.circle,
+          border: Border.all(color: const Color(0xFF3D7EFF).withOpacity(expanded ? 1 : 0.3)),
+        ),
+        child: Icon(
+          expanded ? Icons.remove : Icons.add,
+          color: expanded ? Colors.white : const Color(0xFF3D7EFF),
+          size: 14,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStopRow(int index, String name, bool showDelete, VoidCallback onDelete) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       decoration: BoxDecoration(
-        color: const Color(0xFF1F2937).withOpacity(0.9),
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 10)],
+        border: Border(bottom: BorderSide(color: isDark ? Colors.white.withOpacity(0.05) : Colors.black.withOpacity(0.05))),
       ),
       child: Row(
         children: [
-          Expanded(
-            child: GestureDetector(
-              onTap: () => _openSearchLayer(context, appProvider, isDepart: true),
-              child: _buildSearchField(appProvider.departLabel, Colors.green),
+          Container(
+            width: 18, height: 18,
+            decoration: BoxDecoration(
+              color: const Color(0xFFA78BFA).withOpacity(0.2),
+              shape: BoxShape.circle,
+              border: Border.all(color: const Color(0xFFA78BFA).withOpacity(0.4)),
+            ),
+            child: Center(
+              child: Text('${index + 1}', style: const TextStyle(color: Color(0xFFA78BFA), fontSize: 9, fontWeight: FontWeight.bold)),
             ),
           ),
-          const Padding(padding: EdgeInsets.symmetric(horizontal: 8), child: Icon(Icons.arrow_forward, color: Colors.white70, size: 16)),
+          const SizedBox(width: 12),
           Expanded(
-            child: GestureDetector(
-              onTap: () => _openSearchLayer(context, appProvider, isDepart: false),
-              child: _buildSearchField(appProvider.arriveLabel.isEmpty ? '도착지' : appProvider.arriveLabel, Colors.grey),
+            child: Text(
+              name, 
+              style: TextStyle(
+                color: isDark ? Colors.white.withOpacity(0.8) : Colors.black87, 
+                fontSize: 13, 
+                fontWeight: FontWeight.w500
+              ), 
+              overflow: TextOverflow.ellipsis
             ),
+          ),
+          if (showDelete)
+            GestureDetector(
+              onTap: onDelete,
+              child: Icon(Icons.close, color: isDark ? Colors.white.withOpacity(0.2) : Colors.black.withOpacity(0.2), size: 14),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNavigatingBanner(AppProvider appProvider) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      margin: const EdgeInsets.only(top: 4, bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF3D7EFF).withOpacity(0.15),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFF3D7EFF).withOpacity(0.3)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 6, height: 6,
+            decoration: const BoxDecoration(color: Color(0xFF3D7EFF), shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 8),
+          const Text('안내 중', style: TextStyle(color: Color(0xFF3D7EFF), fontSize: 13, fontWeight: FontWeight.bold)),
+          const SizedBox(width: 8),
+          Text(
+            '· 예상 ${appProvider.totalGuidanceDuration == 0 ? "계산 중..." : "${appProvider.totalGuidanceDuration}분"}', 
+            style: TextStyle(
+              color: isDark ? Colors.white : Colors.black87, 
+              fontSize: 13, 
+              fontWeight: FontWeight.bold
+            )
+          ),
+          const Spacer(),
+          GestureDetector(
+            onTap: () => appProvider.stopGuidance(),
+            child: const Text('종료', style: TextStyle(color: Color(0xFFFF6B6B), fontSize: 13, fontWeight: FontWeight.bold)),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildSearchField(String text, Color dotColor) {
+  void _swapLocations(AppProvider appProvider) {
+    final tempDepart = appProvider.departLabel;
+    final tempArrive = appProvider.arriveLabel;
+    appProvider.setDepartLabel(tempArrive);
+    appProvider.setArriveLabel(tempDepart);
+  }
+
+  Widget _buildSearchField(String text, Color dotColor, {required Color glowColor, bool isDest = false}) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
+      decoration: BoxDecoration(
+        color: isDark ? Colors.white.withOpacity(0.08) : Colors.black.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(16),
+      ),
       child: Row(
+        mainAxisAlignment: MainAxisAlignment.start, // 💡 항상 왼쪽 정렬
         children: [
-          Container(width: 8, height: 8, decoration: BoxDecoration(color: dotColor, shape: BoxShape.circle)),
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(
+              color: dotColor,
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(color: glowColor, blurRadius: 6, spreadRadius: 1),
+              ],
+            ),
+          ),
           const SizedBox(width: 10),
-          Expanded(child: Text(text, style: const TextStyle(fontSize: 14, color: Color(0xFF374151), fontWeight: FontWeight.w600), overflow: TextOverflow.ellipsis)),
+          Flexible(
+            child: Text(
+              text,
+              style: TextStyle(
+                fontSize: 14,
+                color: (text == '어디로 가시나요?' || text == '도착지') 
+                  ? (isDark ? Colors.white.withOpacity(0.4) : Colors.black38) 
+                  : (isDark ? Colors.white : Colors.black),
+                fontWeight: FontWeight.w600,
+                letterSpacing: -0.4,
+              ),
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.left, // 💡 항상 왼쪽 정렬
+            ),
+          ),
         ],
       ),
     );
   }
 
   void _openSearchLayer(BuildContext context, AppProvider appProvider, {required bool isDepart}) {
-    appProvider.searchPlaces(''); // 💡 검색창 열 때 이전 검색 결과 초기화
+    if (!isDepart) {
+      appProvider.resetTempSettings();
+    }
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF111827),
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(0))),
-      builder: (context) => _SearchLayer(isDepart: isDepart),
+      backgroundColor: Colors.transparent,
+      builder: (context) => isDepart ? _DepartureModal() : _DestinationModal(),
     );
   }
 
   Widget _buildPlacePresets(AppProvider appProvider) {
-    final places = appProvider.favoritePlaces;
+    final List<Place> places = appProvider.favoritePlaces; // 💡 명시적 타입 지정 및 로컬 변수 활용
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    
+    // 💡 [수석 개발자] 리스트가 비어있지 않은지 확인
+    if (places.isEmpty) {
+       return const SizedBox.shrink();
+    }
+
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: Row(
-        children: List.generate(places.length, (i) => Padding(
-          padding: const EdgeInsets.only(right: 10),
-          child: ChoiceChip(
-            label: Text(places[i].name),
-            selected: _selectedPlaceIndex == i,
-            onSelected: (val) {
-              setState(() => _selectedPlaceIndex = i);
-              appProvider.setArriveLabel(places[i].name);
-              // 💡 지도 자동 이동 제거
-            },
-            selectedColor: const Color(0xFF2563EB),
-            labelStyle: TextStyle(color: _selectedPlaceIndex == i ? Colors.white : Colors.black),
-          ),
-        )),
+        children: places.asMap().entries.map((entry) {
+          final int i = entry.key;
+          final Place p = entry.value;
+          final bool isSelected = _selectedPlaceIndex == i;
+          final String displayLabel = p.alias ?? p.name;
+
+          return Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: GestureDetector(
+              onTap: () {
+                debugPrint('🎯 [UI] Preset Clicked: $displayLabel (Coord: ${p.lat}, ${p.lng})');
+                setState(() => _selectedPlaceIndex = i);
+                
+                // 💡 [수석 개발자] 프리셋 클릭 시 즉시 안내 모드 진입 (비동기 대기 없이 트리거)
+                appProvider.setTempArriveLabel(displayLabel, lat: p.lat, lng: p.lng);
+                appProvider.startGuidance(); // await 제거로 즉각적인 UI 반응성 확보
+              },
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                decoration: BoxDecoration(
+                  color: isSelected ? const Color(0xFF3D7EFF) : (isDark ? Colors.white.withOpacity(0.05) : Colors.black.withOpacity(0.05)),
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: isSelected ? const Color(0xFF3D7EFF).withOpacity(0.4) : Colors.black.withOpacity(0.05),
+                      blurRadius: 8,
+                      offset: const Offset(0, 4),
+                    )
+                  ],
+                ),
+                child: Text(
+                  displayLabel,
+                  style: TextStyle(
+                    color: isSelected ? Colors.white : (isDark ? const Color(0xFFE8EAF2) : Colors.black87),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: -0.5,
+                  ),
+                ),
+              ),
+            ),
+          );
+        }).toList(),
       ),
     );
   }
@@ -809,7 +1035,6 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final appProvider = context.watch<AppProvider>();
 
-    // 💡 [수석 개발자] 목적지 입력 시 해당 위치로 유동적 이동
     if (appProvider.shouldMoveToArrival && mapController != null) {
       final arrivePin = appProvider.pins.firstWhere(
         (p) => p.type == PinType.arrive, 
@@ -826,7 +1051,6 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     }
 
-    // 💡 [수석 개발자] 경로 분석 완료 시 전체 경로가 보이도록 자동 줌 조절
     if (appProvider.shouldFitBounds && mapController != null) {
       final departPin = appProvider.pins.firstWhere((p) => p.type == PinType.depart, orElse: () => MapPin(x: 0, y: 0, type: PinType.depart));
       final arrivePin = appProvider.pins.firstWhere((p) => p.type == PinType.arrive, orElse: () => MapPin(x: 0, y: 0, type: PinType.arrive));
@@ -842,7 +1066,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     return Scaffold(
-      backgroundColor: const Color(0xFF111827),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: Stack(
         children: [
           Positioned.fill(
@@ -853,29 +1077,25 @@ class _HomeScreenState extends State<HomeScreen> {
                 else
                   SizedBox.expand(
                     child: KakaoMap(
-                      // 💡 [수석 개발자] 분석 세션별로 키를 교체하여 플랫폼 뷰의 데이터 동기화 이슈 해결
                       key: ValueKey('map_session_${appProvider.analysisCount}'),
                       onMapCreated: _onMapCreated,
                       center: _currentPosition!,
                       customOverlays: _generateOverlays(appProvider),
-                      markers: const [], // 💡 중복 표시되는 기본 마커 제거 (CustomOverlay로 대체됨)
+                      markers: const [], 
                       onMarkerTap: (markerId, latLng, zoomLevel) async {
-                        debugPrint('📌 [Map] 마커 클릭됨: $markerId at $latLng');
                         await context.read<AppProvider>().fetchStopArrivalInfo(latLng.latitude, latLng.longitude);
                       },
                       onCustomOverlayTap: (overlayId, latLng) async {
-                        debugPrint('📌 [Map] 오버레이 클릭됨: $overlayId at $latLng');
-                        // 💡 정류장 오버레이(stop_...) 클릭 시에만 정보 조회
                         if (overlayId.startsWith('stop_')) {
                           await context.read<AppProvider>().fetchStopArrivalInfo(latLng.latitude, latLng.longitude);
                         }
                       },
-                      polylines: appProvider.routeSegments.map((segment) => Polyline(
+                      polylines: appProvider.routeSegments.map((RouteSegment segment) => Polyline(
                         polylineId: segment.id,
                         points: segment.points,
                         strokeColor: segment.color,
                         strokeWidth: segment.width.toInt(),
-                        strokeStyle: segment.strokeStyle, // 💡 점선/실선 적용
+                        strokeStyle: segment.strokeStyle, 
                       )).toList(),
                       currentLevel: _currentZoomLevel,
                       onZoomChangeCallback: (int level, ZoomType type) {
@@ -893,6 +1113,29 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: Column(
                     children: [
                       _buildSearchHeader(appProvider),
+                      if (appProvider.state.alarmMessage != null) ...[
+                        const SizedBox(height: 12),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(colors: [Color(0xFF3D7EFF), Color(0xFF6C5CE7)]),
+                            borderRadius: BorderRadius.circular(16),
+                            boxShadow: [BoxShadow(color: const Color(0xFF3D7EFF).withOpacity(0.4), blurRadius: 12)],
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.alarm_on, color: Colors.white, size: 20),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text(
+                                  appProvider.state.alarmMessage!,
+                                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                       if (appProvider.isNearDestination) ...[
                         const SizedBox(height: 12),
                         Container(
@@ -960,136 +1203,139 @@ class _HomeScreenState extends State<HomeScreen> {
               minChildSize: 0.14,
               maxChildSize: 0.95,
               builder: (BuildContext context, ScrollController scrollController) {
-                return Container(
-                  decoration: const BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
-                    boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 15)],
-                  ),
-                  child: Column(
-                    children: [
-                      // 💡 [빨간색 동그라미] 위젯 크기 조절 전용 핸들 영역
-                      // SingleChildScrollView와 제공된 scrollController를 사용하여 '드래그 핸들' 기능 구현
-                      SingleChildScrollView(
-                        controller: scrollController,
-                        child: Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.symmetric(vertical: 15),
-                          color: Colors.transparent, // 터치 영역 확보
-                          child: Center(
+                final isDark = Theme.of(context).brightness == Brightness.dark;
+                return ClipRRect(
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(40)),
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: isDark ? const Color(0xFF1A1E2E).withOpacity(0.8) : Colors.white.withOpacity(0.9),
+                        borderRadius: const BorderRadius.vertical(top: Radius.circular(40)),
+                        border: Border.all(color: isDark ? Colors.white.withOpacity(0.1) : Colors.black.withOpacity(0.05)),
+                        boxShadow: [BoxShadow(color: Colors.black.withOpacity(isDark ? 0.4 : 0.1), blurRadius: 24)],
+                      ),
+                      child: Column(
+                        children: [
+                          SingleChildScrollView(
+                            controller: scrollController,
                             child: Container(
-                              width: 45, 
-                              height: 6, 
-                              decoration: BoxDecoration(
-                                color: Colors.grey[300], 
-                                borderRadius: BorderRadius.circular(10)
+                              width: double.infinity,
+                              padding: const EdgeInsets.symmetric(vertical: 15),
+                              color: Colors.transparent, 
+                              child: Center(
+                                child: Container(
+                                  width: 40, 
+                                  height: 4, 
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withOpacity(0.1), 
+                                    borderRadius: BorderRadius.circular(2)
+                                  ),
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                      ),
-                      
-                      // 💡 [파란색 동그라미] 내용물 스크롤 전용 영역
-                      // 독립된 _internalSheetScrollController를 사용하여 시트 이동 없이 내부만 움직이게 함
-                      Expanded(
-                        child: ListView(
-                          controller: _internalSheetScrollController,
-                          padding: const EdgeInsets.only(left: 20, right: 20, bottom: 80),
-                          children: [
-                            if (appProvider.state.barMode == WidgetBarMode.lineInfo) ...[
-                              _buildBusStopListView(appProvider),
-                            ] else if (appProvider.state.barMode == WidgetBarMode.lineSchedule) ...[
-                              _buildDualScheduleView(appProvider),
-                            ] else if (appProvider.state.barMode == WidgetBarMode.lineDetails) ...[
-                              _buildLineDetailInfoView(appProvider),
-                            ] else if (appProvider.barMode == WidgetBarMode.main) ...[
-                              const Text('자주 가는 목적지', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                              const SizedBox(height: 15),
-                              _buildPlacePresets(appProvider),
-                              const SizedBox(height: 30),
-                              Row(
-                                children: [
-                                  const Text('지금 가장 빠른 노선', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Color(0xFF4B5563))),
-                                  const SizedBox(width: 8),
-                                  if (appProvider.isAnalyzing)
-                                    const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                          
+                          Expanded(
+                            child: ListView(
+                              controller: _internalSheetScrollController,
+                              padding: const EdgeInsets.only(left: 24, right: 24, bottom: 100),
+                              children: [
+                                if (appProvider.state.barMode == WidgetBarMode.lineInfo) ...[
+                                  _buildBusStopListView(appProvider),
+                                ] else if (appProvider.state.barMode == WidgetBarMode.lineSchedule) ...[
+                                  _buildDualScheduleView(appProvider),
+                                ] else if (appProvider.state.barMode == WidgetBarMode.lineDetails) ...[
+                                  _buildLineDetailInfoView(appProvider),
+                                ] else if (appProvider.barMode == WidgetBarMode.main) ...[
+                                  Text('자주 가는 목적지', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: isDark ? Colors.white : Colors.black, letterSpacing: -0.5)),
+                                  const SizedBox(height: 16),
+                                  _buildPlacePresets(appProvider),
+                                  const SizedBox(height: 32),
+                                  Row(
+                                    children: [
+                                      Text('지금 가장 빠른 노선', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: isDark ? Colors.white : Colors.black, letterSpacing: -0.4)),
+                                      const SizedBox(width: 10),
+                                      if (appProvider.isAnalyzing)
+                                        const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF3D7EFF)))
+                                      else
+                                        IconButton(
+                                          icon: const Icon(Icons.refresh, size: 20, color: Color(0xFF3D7EFF)),
+                                          constraints: const BoxConstraints(),
+                                          padding: EdgeInsets.zero,
+                                          onPressed: () => appProvider.refreshCurrentView(),
+                                        ),
+                                      const Spacer(),
+                                      if (appProvider.recommendedRoutes.isNotEmpty || appProvider.isAnalyzing)
+                                        GestureDetector(
+                                          onTap: () => appProvider.clearCurrentRoute(),
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                            decoration: BoxDecoration(color: const Color(0xFFFF6B6B).withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
+                                            child: const Text('경로 취소', style: TextStyle(color: Color(0xFFFF6B6B), fontSize: 12, fontWeight: FontWeight.bold)),
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 16),
+                                  if (appProvider.errorMessage != null)
+                                    AppEmptyState(
+                                      icon: Icons.error_outline,
+                                      title: '경로를 찾을 수 없습니다.',
+                                      message: appProvider.errorMessage,
+                                      actionTitle: '다시 시도',
+                                      onAction: () => appProvider.setArriveLabel(appProvider.arriveLabel),
+                                    )
+                                  else if (appProvider.recommendedRoutes.isEmpty && !appProvider.isAnalyzing)
+                                    const AppEmptyState(
+                                      icon: Icons.search,
+                                      title: '어디로 가시나요?',
+                                      message: '목적지를 선택하면 최적의 경로를 분석합니다.',
+                                    )
                                   else
-                                    IconButton(
-                                      icon: const Icon(Icons.refresh, size: 20, color: Color(0xFF2563EB)),
-                                      constraints: const BoxConstraints(),
-                                      padding: EdgeInsets.zero,
-                                      onPressed: () => appProvider.refreshCurrentView(),
-                                    ),
-                                  const Spacer(),
-                                  if (appProvider.recommendedRoutes.isNotEmpty || appProvider.isAnalyzing)
-                                    TextButton.icon(
-                                      onPressed: () => appProvider.clearCurrentRoute(),
-                                      icon: const Icon(Icons.close, size: 16, color: Color(0xFFDC2626)),
-                                      label: const Text('경로 취소', style: TextStyle(color: Color(0xFFDC2626), fontSize: 13, fontWeight: FontWeight.bold)),
-                                      style: TextButton.styleFrom(
-                                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                                        visualDensity: VisualDensity.compact,
+                                    ...List.generate(appProvider.recommendedRoutes.length, (index) {
+                                      final route = appProvider.recommendedRoutes[index];
+                                      return _buildBusRouteCard(route, index, appProvider.selectedRouteIndex == index, appProvider);
+                                    }),
+                                ] else ...[
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      IconButton(
+                                        icon: Icon(Icons.arrow_back_ios_new, size: 20, color: isDark ? Colors.white : Colors.black87),
+                                        onPressed: () => appProvider.setBarMode(WidgetBarMode.main),
                                       ),
-                                    ),
-                                ],
-                              ),
-                              const SizedBox(height: 15),
-                              if (appProvider.errorMessage != null)
-                                AppEmptyState(
-                                  icon: Icons.error_outline,
-                                  title: '경로를 찾을 수 없습니다.',
-                                  message: appProvider.errorMessage,
-                                  actionTitle: '다시 시도',
-                                  onAction: () => appProvider.setArriveLabel(appProvider.arriveLabel),
-                                )
-                              else if (appProvider.recommendedRoutes.isEmpty && !appProvider.isAnalyzing)
-                                const AppEmptyState(
-                                  icon: Icons.search,
-                                  title: '어디로 가시나요?',
-                                  message: '목적지를 선택하면 최적의 경로를 분석합니다.',
-                                )
-                              else
-                                ...List.generate(appProvider.recommendedRoutes.length, (index) {
-                                  final route = appProvider.recommendedRoutes[index];
-                                  return _buildBusRouteCard(route, index, appProvider.selectedRouteIndex == index, appProvider);
-                                }),
-                            ] else ...[
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                children: [
-                                  IconButton(
-                                    icon: const Icon(Icons.arrow_back_ios_new, size: 20),
-                                    onPressed: () => appProvider.setBarMode(WidgetBarMode.main),
+                                      Expanded(
+                                        child: Text(
+                                          appProvider.selectedStopName ?? '정류장 정보',
+                                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: isDark ? Colors.white : Colors.black87),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                      if (!appProvider.isLoadingArrivals)
+                                        IconButton(
+                                          icon: const Icon(Icons.refresh, size: 20, color: Color(0xFF3D7EFF)),
+                                          onPressed: () => appProvider.refreshCurrentView(),
+                                        ),
+                                    ],
                                   ),
-                                  Expanded(
-                                    child: Text(
-                                      appProvider.selectedStopName ?? '정류장 정보',
-                                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                  if (!appProvider.isLoadingArrivals)
-                                    IconButton(
-                                      icon: const Icon(Icons.refresh, size: 20, color: Color(0xFF2563EB)),
-                                      onPressed: () => appProvider.refreshCurrentView(),
-                                    ),
+                                  Divider(height: 30, color: isDark ? Colors.white10 : Colors.black.withOpacity(0.05)),
+                                  if (appProvider.isLoadingArrivals)
+                                    const Center(child: Padding(padding: EdgeInsets.all(40), child: CircularProgressIndicator(color: Color(0xFF3D7EFF))))
+                                  else if (appProvider.stopArrivals.isEmpty)
+                                    const Padding(
+                                      padding: EdgeInsets.all(40),
+                                      child: Center(child: Text('도착 예정 정보가 없습니다.', style: TextStyle(color: Color(0xFF555D7A)))),
+                                    )
+                                  else
+                                    ...appProvider.stopArrivals.map((bus) => _buildArrivalListTile(bus)),
                                 ],
-                              ),
-                              const Divider(height: 30),
-                              if (appProvider.isLoadingArrivals)
-                                const Center(child: Padding(padding: EdgeInsets.all(40), child: CircularProgressIndicator()))
-                              else if (appProvider.stopArrivals.isEmpty)
-                                const Padding(
-                                  padding: EdgeInsets.all(40),
-                                  child: Center(child: Text('도착 예정 정보가 없습니다.', style: TextStyle(color: Colors.grey))),
-                                )
-                              else
-                                ...appProvider.stopArrivals.map((bus) => _buildArrivalListTile(bus)),
-                            ],
-                          ],
-                        ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
                 );
               },
@@ -1101,128 +1347,585 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildFloatingButton(IconData icon, VoidCallback onPressed) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
-      width: 40, height: 40,
-      decoration: BoxDecoration(color: Colors.white.withOpacity(0.9), borderRadius: BorderRadius.circular(8), boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 4)]),
-      child: IconButton(padding: EdgeInsets.zero, icon: Icon(icon, size: 24, color: const Color(0xFF111827)), onPressed: onPressed),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.2),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+          child: Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: isDark ? const Color(0xFF1A1E2E).withOpacity(0.8) : Colors.white.withOpacity(0.9),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: isDark ? Colors.white.withOpacity(0.15) : Colors.black.withOpacity(0.05)),
+            ),
+            child: IconButton(
+              padding: EdgeInsets.zero,
+              icon: Icon(icon, size: 22, color: isDark ? Colors.white : Colors.black54),
+              onPressed: onPressed,
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
 
-class _SearchLayer extends StatefulWidget {
-  final bool isDepart;
-  const _SearchLayer({required this.isDepart});
+class _PulseDot extends StatefulWidget {
+  final Color color;
+  const _PulseDot({required this.color});
 
   @override
-  State<_SearchLayer> createState() => _SearchLayerState();
+  State<_PulseDot> createState() => _PulseDotState();
 }
 
-class _SearchLayerState extends State<_SearchLayer> {
+class _PulseDotState extends State<_PulseDot> with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _animation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(vsync: this, duration: const Duration(seconds: 1))..repeat(reverse: true);
+    _animation = Tween<double>(begin: 0.4, end: 1.0).animate(_controller);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _animation,
+      child: Container(width: 8, height: 8, decoration: BoxDecoration(color: widget.color, shape: BoxShape.circle)),
+    );
+  }
+}
+
+class _DepartureModal extends StatefulWidget {
+  @override
+  State<_DepartureModal> createState() => _DepartureModalState();
+}
+
+class _DepartureModalState extends State<_DepartureModal> {
   final TextEditingController _controller = TextEditingController();
 
   @override
   Widget build(BuildContext context) {
     final appProvider = context.watch<AppProvider>();
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    return Container(
-      height: MediaQuery.of(context).size.height * 0.9,
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const SizedBox(height: 20),
-          Row(
-            children: [
-              IconButton(icon: const Icon(Icons.close, color: Colors.white, size: 28), onPressed: () => Navigator.pop(context)),
-              Text(widget.isDepart ? '출발지 설정' : '도착지 설정', style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
-            ],
-          ),
-          const SizedBox(height: 20),
-          TextField(
-            controller: _controller,
-            style: const TextStyle(color: Colors.white),
-            textInputAction: TextInputAction.search, // 💡 키보드 엔터키를 검색 아이콘으로 변경
-            decoration: InputDecoration(
-              hintText: widget.isDepart ? '출발지 입력...' : '도착지 입력...',
-              hintStyle: const TextStyle(color: Colors.white54),
-              prefixIcon: Icon(Icons.circle, color: widget.isDepart ? Colors.blue : Colors.grey, size: 12),
-              // 💡 검색 버튼 추가
-              suffixIcon: IconButton(
-                icon: const Icon(Icons.search, color: Colors.white70),
-                onPressed: () {
-                  if (_controller.text.trim().isNotEmpty) {
-                    appProvider.searchPlaces(_controller.text.trim());
-                    FocusScope.of(context).unfocus(); // 검색 시 키보드 닫기
-                  }
-                },
+    return Center(
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 32),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(40),
+          border: Border.all(color: isDark ? Colors.white.withOpacity(0.2) : Colors.black.withOpacity(0.1)),
+          boxShadow: [BoxShadow(color: Colors.black.withOpacity(isDark ? 0.5 : 0.1), blurRadius: 40)],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(40),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+            child: Container(
+              color: isDark ? const Color(0xFF1A1E2E).withOpacity(0.8) : const Color(0xFFFDFBF7).withOpacity(0.95),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+                    child: Row(
+                      children: [
+                        GestureDetector(
+                          onTap: () => Navigator.pop(context),
+                          child: Container(
+                            width: 36, height: 36,
+                            decoration: BoxDecoration(color: isDark ? Colors.white.withOpacity(0.05) : Colors.black.withOpacity(0.05), shape: BoxShape.circle),
+                            child: Icon(Icons.close, color: isDark ? const Color(0xFF8B91A8) : Colors.black54, size: 18),
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Text('출발지 설정', style: TextStyle(color: isDark ? Colors.white : Colors.black, fontSize: 18, fontWeight: FontWeight.w900)),
+                      ],
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: isDark ? Colors.white.withOpacity(0.05) : Colors.black.withOpacity(0.03),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: isDark ? Colors.white.withOpacity(0.05) : Colors.black.withOpacity(0.05)),
+                      ),
+                      child: TextField(
+                        controller: _controller,
+                        autofocus: true,
+                        style: TextStyle(color: isDark ? Colors.white : Colors.black, fontWeight: FontWeight.bold),
+                        decoration: InputDecoration(
+                          hintText: '출발지 입력...',
+                          hintStyle: TextStyle(color: isDark ? Colors.white.withOpacity(0.2) : Colors.black26),
+                          prefixIcon: const Icon(Icons.circle, color: Color(0xFF3D7EFF), size: 10),
+                          border: InputBorder.none,
+                          contentPadding: const EdgeInsets.symmetric(vertical: 16),
+                        ),
+                        onChanged: (val) => appProvider.searchPlaces(val),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  // 💡 [수석 개발자] 현재 위치 매크로 버튼 추가
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    child: GestureDetector(
+                      onTap: () {
+                        appProvider.setDepartLabel('현재 위치');
+                        Navigator.pop(context);
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        decoration: BoxDecoration(
+                          color: isDark ? Colors.white.withOpacity(0.05) : Colors.black.withOpacity(0.03),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: isDark ? const Color(0xFF3D7EFF).withOpacity(0.3) : const Color(0xFF3D7EFF).withOpacity(0.1)),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(Icons.my_location, size: 18, color: Color(0xFF3D7EFF)),
+                            const SizedBox(width: 10),
+                            Text(
+                              '현재 위치로 설정',
+                              style: TextStyle(
+                                color: isDark ? Colors.white : Colors.black87,
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 24),
+                    height: 1, color: isDark ? Colors.white.withOpacity(0.05) : Colors.black.withOpacity(0.05),
+                  ),
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 12),
+                    child: Text('즐겨찾는 장소', style: TextStyle(color: Color(0xFF555D7A), fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1)),
+                  ),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 280),
+                    child: ListView.builder(
+                      shrinkWrap: true,
+                      padding: const EdgeInsets.only(bottom: 24),
+                      itemCount: appProvider.searchResults.isNotEmpty ? appProvider.searchResults.length : appProvider.favoritePlaces.length,
+                      itemBuilder: (context, index) {
+                        final bool isSearch = appProvider.searchResults.isNotEmpty;
+                        final String name = isSearch ? appProvider.searchResults[index]['name'] : appProvider.favoritePlaces[index].name;
+                        final String desc = isSearch ? appProvider.searchResults[index]['address'] : appProvider.favoritePlaces[index].address;
+                        final String icon = isSearch ? '📍' : (name == '우리집' ? '🏠' : (name == '학교' ? '🏫' : '🏢'));
+
+                        return Material(
+                          color: Colors.transparent,
+                          child: ListTile(
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
+                            title: Text(
+                              isSearch ? name : (appProvider.favoritePlaces[index].alias ?? name), 
+                              style: TextStyle(color: isDark ? Colors.white : Colors.black, fontSize: 15, fontWeight: FontWeight.bold)
+                            ),
+                            subtitle: Text(desc, style: const TextStyle(color: Color(0xFF555D7A), fontSize: 12), overflow: TextOverflow.ellipsis),
+                            onTap: () {
+                              if (isSearch) {
+                                appProvider.setDepartLabel(name, lat: appProvider.searchResults[index]['lat'], lng: appProvider.searchResults[index]['lng']);
+                              } else {
+                                final p = appProvider.favoritePlaces[index];
+                                // 💡 별칭으로 출발지 라벨 설정
+                                appProvider.setDepartLabel(p.alias ?? p.name, lat: p.lat, lng: p.lng);
+                              }
+                              Navigator.pop(context);
+                            },
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
               ),
-              filled: true,
-              fillColor: const Color(0xFF1F2937),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-            ),
-            onSubmitted: (val) {
-              // 💡 엔터키(검색 버튼)를 눌렀을 때 실행
-              if (val.trim().isNotEmpty) {
-                appProvider.searchPlaces(val.trim());
-                FocusScope.of(context).unfocus(); // 검색 후 키보드 닫기
-              }
-            },
-            onChanged: (val) {
-              if (val.isEmpty) appProvider.searchPlaces(''); 
-            },
-          ),
-          const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14), side: const BorderSide(color: Color(0xFF374151)), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-              onPressed: () => Navigator.pop(context),
-              icon: const Icon(Icons.location_on_outlined, color: Colors.blue, size: 18),
-              label: const Text('지도에서 직접 선택하기', style: TextStyle(color: Colors.white)),
             ),
           ),
-          const SizedBox(height: 30),
-          const Text('즐겨찾는 장소', style: TextStyle(color: Colors.white54, fontSize: 13)),
-          const SizedBox(height: 10),
-          Expanded(
-            child: appProvider.isSearching 
-              ? const Center(child: CircularProgressIndicator())
-              : ListView.builder(
-                  itemCount: appProvider.searchResults.isNotEmpty ? appProvider.searchResults.length : appProvider.favoritePlaces.length,
-                  itemBuilder: (context, index) {
-                    if (appProvider.searchResults.isNotEmpty) {
-                      final res = appProvider.searchResults[index];
-                      return ListTile(
-                        leading: const Icon(Icons.location_on, color: Colors.grey),
-                        title: Text(res['name'], style: const TextStyle(color: Colors.white)),
-                        subtitle: Text(res['address'], style: const TextStyle(color: Colors.white54, fontSize: 12)),
-                        onTap: () {
-                          if (widget.isDepart) {
-                            appProvider.setDepartLabel(res['name'], lat: res['lat'], lng: res['lng']);
-                          } else {
-                            appProvider.setArriveLabel(res['name'], lat: res['lat'], lng: res['lng']);
-                          }
-                          Navigator.pop(context);
-                        },
-                      );
-                    } else {
-                      final place = appProvider.favoritePlaces[index];
-                      return ListTile(
-                        leading: const Icon(Icons.home_outlined, color: Colors.grey),
-                        title: Text(place.name, style: const TextStyle(color: Colors.white)),
-                        subtitle: Text(place.address, style: const TextStyle(color: Colors.white54, fontSize: 12)),
-                        onTap: () {
-                          if (widget.isDepart) {
-                            appProvider.setDepartLabel(place.name, lat: place.lat, lng: place.lng);
-                          } else {
-                            appProvider.setArriveLabel(place.name, lat: place.lat, lng: place.lng);
-                          }
-                          Navigator.pop(context);
-                        },
-                      );
-                    }
+        ),
+      ),
+    );
+  }
+}
+
+class _DestinationModal extends StatefulWidget {
+  @override
+  State<_DestinationModal> createState() => _DestinationModalState();
+}
+
+class _DestinationModalState extends State<_DestinationModal> {
+  final TextEditingController _controller = TextEditingController();
+  final FocusNode _extraFocusNode = FocusNode();
+  int? _editingIdx;
+  String _extraInput = '';
+
+  @override
+  void dispose() {
+    _extraFocusNode.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final appProvider = context.watch<AppProvider>();
+    final List<Place> tempExtras = appProvider.tempExtras;
+    final bool hasExtras = tempExtras.isNotEmpty || _editingIdx != null;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Center(
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 32),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(40),
+          border: Border.all(color: isDark ? Colors.white.withOpacity(0.2) : Colors.black.withOpacity(0.1)),
+          boxShadow: [BoxShadow(color: Colors.black.withOpacity(isDark ? 0.5 : 0.1), blurRadius: 40)],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(40),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+            child: Container(
+              color: isDark ? const Color(0xFF1A1E2E).withOpacity(0.85) : const Color(0xFFFDFBF7).withOpacity(0.95),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Header
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+                    child: Row(
+                      children: [
+                        GestureDetector(
+                          onTap: () => Navigator.pop(context),
+                          child: Container(
+                            width: 36, height: 36,
+                            decoration: BoxDecoration(color: isDark ? Colors.white.withOpacity(0.05) : Colors.black.withOpacity(0.05), shape: BoxShape.circle),
+                            child: Icon(Icons.close, color: isDark ? const Color(0xFF8B91A8) : Colors.black54, size: 18),
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Text('목적지 설정', style: TextStyle(color: isDark ? Colors.white : Colors.black, fontSize: 18, fontWeight: FontWeight.w900)),
+                      ],
+                    ),
+                  ),
+
+                  // Search Bar + Plus
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: isDark ? Colors.white.withOpacity(0.05) : Colors.black.withOpacity(0.03),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(color: isDark ? Colors.white.withOpacity(0.05) : Colors.black.withOpacity(0.05)),
+                            ),
+                            child: TextField(
+                              controller: _controller,
+                              autofocus: true,
+                              style: TextStyle(color: isDark ? Colors.white : Colors.black, fontWeight: FontWeight.bold),
+                              decoration: InputDecoration(
+                                hintText: '도착지 검색',
+                                hintStyle: TextStyle(color: isDark ? Colors.white.withOpacity(0.2) : Colors.black26),
+                                prefixIcon: const Icon(Icons.circle, color: Color(0xFFFF6B6B), size: 10),
+                                border: InputBorder.none,
+                                contentPadding: const EdgeInsets.symmetric(vertical: 16),
+                                suffixIcon: const Icon(Icons.search, color: Color(0xFF3D7EFF), size: 20),
+                              ),
+                              onChanged: (val) {
+                              appProvider.setTempArriveLabel(val);
+                              appProvider.searchPlaces(val);
+                            },
+                            ),
+                          ),
+                        ),
+                        if (tempExtras.length < 3 && appProvider.searchResults.isEmpty) ...[
+                          const SizedBox(width: 12),
+                          GestureDetector(
+                            onTap: () {
+                              if (_controller.text.isNotEmpty && appProvider.tempArriveLabel.isNotEmpty) {
+                                // 💡 [수석 개발자] 검색창의 내용을 추가 목적지로 이동
+                                appProvider.addTempExtra(
+                                  appProvider.tempArriveLabel, 
+                                  lat: appProvider.tempArriveLat, 
+                                  lng: appProvider.tempArriveLng
+                                );
+                                // 검색창 초기화
+                                setState(() {
+                                  _controller.clear();
+                                  appProvider.setTempArriveLabel('');
+                                });
+                                appProvider.searchPlaces('');
+                              } else {
+                                // 기존 로직: 그냥 포커스만 주기 (비어있을 때)
+                                _extraFocusNode.requestFocus();
+                              }
+                            },
+                            child: Container(
+                              width: 52, height: 52,
+                              decoration: BoxDecoration(
+                                gradient: const LinearGradient(colors: [Color(0xFF3D7EFF), Color(0xFF6C5CE7)]),
+                                borderRadius: BorderRadius.circular(20),
+                                boxShadow: [BoxShadow(color: const Color(0xFF3D7EFF).withOpacity(0.3), blurRadius: 15, offset: const Offset(0, 5))],
+                              ),
+                              child: const Icon(Icons.add, color: Colors.white, size: 24),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  // 💡 [수석 개발자] 목적지 모달에도 현재 위치 매크로 버튼 추가
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    child: GestureDetector(
+                      onTap: () {
+                        final currentPos = appProvider.pins.firstWhere(
+                          (p) => p.type == PinType.depart,
+                          orElse: () => MapPin(x: 35.1601, y: 126.8515, type: PinType.depart)
+                        );
+                        appProvider.setTempArriveLabel('현재 위치', lat: currentPos.x, lng: currentPos.y);
+                        // 💡 [수석 개발자] 선택 즉시 검색어 초기화 및 텍스트 반영
+                        setState(() {
+                          _controller.text = '현재 위치';
+                        });
+                        appProvider.searchPlaces('');
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        decoration: BoxDecoration(
+                          color: isDark ? Colors.white.withOpacity(0.05) : Colors.black.withOpacity(0.03),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: isDark ? const Color(0xFF3D7EFF).withOpacity(0.3) : const Color(0xFF3D7EFF).withOpacity(0.1)),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(Icons.my_location, size: 18, color: Color(0xFF3D7EFF)),
+                            const SizedBox(width: 10),
+                            Text(
+                              '현재 위치로 설정',
+                              style: TextStyle(
+                                color: isDark ? Colors.white : Colors.black87,
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+
+                  // Fixed Height Content Area
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 320),
+                    child: appProvider.searchResults.isNotEmpty
+                        ? _buildSearchResults(appProvider)
+                        : (!hasExtras ? _buildFavorites(appProvider) : _buildExtraStops(appProvider, tempExtras)),
+                  ),
+
+                  // Action Button
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 12, 24, 32),
+                    child: GestureDetector(
+                      onTap: () {
+                        appProvider.startGuidance();
+                        Navigator.pop(context);
+                        Navigator.of(context, rootNavigator: true).push(
+                          MaterialPageRoute(builder: (context) => const RoutePreviewScreen()),
+                        );
+                      },
+                      child: Container(
+                        width: double.infinity,
+                        height: 56,
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(colors: [Color(0xFF3D7EFF), Color(0xFF6C5CE7)]),
+                          borderRadius: BorderRadius.circular(20),
+                          boxShadow: [BoxShadow(color: const Color(0xFF3D7EFF).withOpacity(0.4), blurRadius: 20, offset: const Offset(0, 8))],
+                        ),
+                        child: const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.play_circle_fill, color: Colors.white, size: 20),
+                            SizedBox(width: 12),
+                            Text('안내 시작', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w900, letterSpacing: -0.5)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSearchResults(AppProvider appProvider) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Text('검색 결과', style: TextStyle(color: Color(0xFF3D7EFF), fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1)),
+        const SizedBox(height: 12),
+        Flexible(
+          child: ListView.builder(
+            shrinkWrap: true,
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            itemCount: appProvider.searchResults.length,
+            itemBuilder: (context, index) {
+              final res = appProvider.searchResults[index];
+              return Material(
+                color: Colors.transparent,
+                child: ListTile(
+                  contentPadding: const EdgeInsets.symmetric(vertical: 4),
+                  leading: Container(
+                    width: 44, height: 44,
+                    decoration: BoxDecoration(color: isDark ? Colors.white.withOpacity(0.05) : Colors.black.withOpacity(0.03), borderRadius: BorderRadius.circular(16)),
+                    child: const Center(child: Text('📍', style: TextStyle(fontSize: 18))),
+                  ),
+                  title: Text(res['name'], style: TextStyle(color: isDark ? Colors.white : Colors.black87, fontSize: 15, fontWeight: FontWeight.bold)),
+                  subtitle: Text(res['address'], style: TextStyle(color: isDark ? const Color(0xFF8B91A8) : const Color(0xFF555D7A), fontSize: 12), overflow: TextOverflow.ellipsis),
+                  onTap: () {
+                    debugPrint('🔎 [UI] Search Result Selected: ${res['name']}');
+                    setState(() {
+                      if (_editingIdx == null) {
+                        _controller.text = res['name'];
+                        appProvider.setTempArriveLabel(res['name'], lat: res['lat'], lng: res['lng']);
+                      } else {
+                        if (_editingIdx == -1) {
+                          appProvider.addTempExtra(res['name'], lat: res['lat'], lng: res['lng']);
+                        } else {
+                          appProvider.updateTempExtra(_editingIdx!, res['name'], lat: res['lat'], lng: res['lng']);
+                        }
+                        _editingIdx = null;
+                      }
+                    });
+                    appProvider.searchPlaces(''); 
                   },
                 ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFavorites(AppProvider appProvider) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text('즐겨찾는 장소', style: TextStyle(color: isDark ? const Color(0xFF8B91A8) : const Color(0xFF555D7A), fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1)),
+        const SizedBox(height: 12),
+        Flexible(
+          child: ListView.builder(
+            shrinkWrap: true,
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            itemCount: appProvider.favoritePlaces.length,
+            itemBuilder: (context, index) {
+              final place = appProvider.favoritePlaces[index];
+              return Material(
+                color: Colors.transparent,
+                child: ListTile(
+                  contentPadding: const EdgeInsets.symmetric(vertical: 4),
+                  title: Text(place.alias ?? place.name, style: TextStyle(color: isDark ? Colors.white : Colors.black87, fontSize: 15, fontWeight: FontWeight.bold)),
+                  subtitle: Text(place.address, style: TextStyle(color: isDark ? const Color(0xFF8B91A8) : const Color(0xFF555D7A), fontSize: 12), overflow: TextOverflow.ellipsis),
+                  onTap: () {
+                    debugPrint('⭐️ [UI] Favorite Selected in Modal: ${place.alias ?? place.name}');
+                    // 💡 [수석 개발자] 텍스트 필드 갱신 및 검색 결과 초기화로 확실한 반응성 확보
+                    setState(() {
+                      _controller.text = place.alias ?? place.name;
+                    });
+                    appProvider.setTempArriveLabel(place.alias ?? place.name, lat: place.lat, lng: place.lng);
+                    appProvider.searchPlaces(''); // 검색 결과 지워서 확실히 선택되었음을 알림
+                  },
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildExtraStops(AppProvider appProvider, List<Place> extras) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text('추가 목적지', style: TextStyle(color: isDark ? const Color(0xFF8B91A8) : const Color(0xFF555D7A), fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1)),
+        const SizedBox(height: 12),
+        Flexible(
+          child: ListView.builder(
+            shrinkWrap: true,
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            itemCount: extras.length,
+            itemBuilder: (context, i) => _buildStopItem(i, extras[i].name, appProvider),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStopItem(int index, String name, AppProvider appProvider) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: isDark ? Colors.white.withOpacity(0.05) : Colors.black.withOpacity(0.02),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 24, height: 24,
+            decoration: BoxDecoration(color: const Color(0xFF3D7EFF).withOpacity(0.2), shape: BoxShape.circle),
+            child: Center(child: Text('${index + 1}', style: const TextStyle(color: Color(0xFF3D7EFF), fontSize: 10, fontWeight: FontWeight.bold))),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Text(name, style: TextStyle(color: isDark ? Colors.white : Colors.black, fontSize: 14, fontWeight: FontWeight.bold)),
+          ),
+          GestureDetector(
+            onTap: () => appProvider.removeTempExtra(index),
+            child: Icon(Icons.remove_circle_outline, color: const Color(0xFFFF6B6B).withOpacity(0.7), size: 20),
           ),
         ],
       ),

@@ -64,14 +64,41 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final appProvider = context.watch<AppProvider>();
+    
     return MaterialApp.router(
       title: 'Routine Bus',
       debugShowCheckedModeBanner: false,
+      themeMode: appProvider.darkMode ? ThemeMode.dark : ThemeMode.light,
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+        brightness: Brightness.light,
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue, brightness: Brightness.light),
         useMaterial3: true,
         fontFamily: 'Inter',
+        scaffoldBackgroundColor: const Color(0xFFFDFBF7), // 💡 좀 더 편안한 아이보리 배경
       ),
+      darkTheme: ThemeData(
+        brightness: Brightness.dark,
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue, brightness: Brightness.dark),
+        useMaterial3: true,
+        fontFamily: 'Inter',
+        scaffoldBackgroundColor: const Color(0xFF0F1117),
+      ),
+      builder: (context, child) {
+        // 💡 [Figma] 전역 폰트 크기 변환 규칙 적용
+        final mediaQueryData = MediaQuery.of(context);
+        final scaleFactor = mediaQueryData.textScaler.scale(1.0);
+        
+        // fontScaleDelta가 -5, 0, 5 일 때 적절한 배율로 환산 (약 0.8, 1.0, 1.2)
+        double customScale = 1.0 + (appProvider.state.fontScaleDelta / 25.0);
+
+        return MediaQuery(
+          data: mediaQueryData.copyWith(
+            textScaler: TextScaler.linear(scaleFactor * customScale),
+          ),
+          child: child!,
+        );
+      },
       routerConfig: _router,
     );
   }
@@ -86,7 +113,7 @@ final _router = GoRouter(
         GoRoute(path: '/', builder: (context, state) => const HomeScreen()),
         GoRoute(path: '/schedule', builder: (context, state) => const ScheduleScreen()),
         GoRoute(path: '/notification', builder: (context, state) => const NotificationScreen()),
-        GoRoute(path: '/profile', builder: (context, state) => const ProfileScreen()),
+        GoRoute(path: '/profile', builder: (context, state) => const SettingsScreen()),
       ],
     ),
   ],

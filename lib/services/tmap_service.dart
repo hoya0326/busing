@@ -7,6 +7,7 @@ import 'api_endpoints.dart'; // 💡 추가
 
 class TmapService {
   Future<Map<String, dynamic>?> getTransitRoute(LatLng origin, LatLng dest) async {
+    debugPrint('📡 [Tmap] 경로 요청: (${origin.latitude}, ${origin.longitude}) -> (${dest.latitude}, ${dest.longitude})');
     try {
       final response = await http.post(
         TmapEndpoint.transitRoutes(),
@@ -276,8 +277,8 @@ class TmapService {
         segments.add(RouteSegment(
           id: 'seg_${segments.length}_${mode}_${points.length}',
           points: points,
-          color: mode == 'WALK' ? const Color(0xFF34D399) : _parseColor(leg['routeColor']),
-          width: mode == 'WALK' ? 3.5 : 7.0, // 💡 [수석 개발자] 경로선을 더 얇고 세련되게 조정
+          color: _getSegmentColor(leg, mode), // 💡 [수석 개발자] 버스 종류별 색상 구분 로직 적용
+          width: mode == 'WALK' ? 3.5 : 7.0, 
           strokeStyle: mode == 'WALK' ? StrokeStyle.dot : StrokeStyle.solid,
         ));
       }
@@ -286,6 +287,39 @@ class TmapService {
     }
 
     return {'segments': segments, 'stops': stops};
+  }
+
+  // 💡 [New] 이동 수단 및 버스 종류에 따른 경로선 색상 결정
+  Color _getSegmentColor(dynamic leg, String mode) {
+    if (mode == 'WALK') return const Color(0xFF34D399); // 도보는 청록색 (도트)
+    
+    if (mode == 'BUS') {
+      final String routeName = (leg['route'] ?? leg['lane']?[0]?['route'] ?? '').toString();
+      final String type = (leg['lane']?[0]?['type'] ?? '').toString();
+      
+      // 1. 급행버스 (빨간색)
+      if (routeName.contains('급행') || type == '6' || type == '14') {
+        return const Color(0xFFEF4444);
+      }
+      
+      // 2. 간선버스 (노란색)
+      if (routeName.contains('간선') || type == '11' || routeName.startsWith('첨단') || routeName.startsWith('수완') || routeName.startsWith('진월')) {
+        // 광주 특성상 주요 거점 이름으로 시작하는 버스들은 대부분 간선
+        return const Color(0xFFFACC15);
+      }
+      
+      // 3. 지선버스 (초록색)
+      if (routeName.contains('지선') || type == '12') {
+        return const Color(0xFF22C55E);
+      }
+      
+      // 기본값 (Tmap 제공 색상이 있으면 사용, 없으면 파란색)
+      return _parseColor(leg['routeColor']);
+    }
+    
+    if (mode == 'SUBWAY') return const Color(0xFF2563EB); // 지하철은 파란색
+    
+    return _parseColor(leg['routeColor']);
   }
 
   // Tmap 응답에서 모든 경로와 버스 정보를 추출합니다.

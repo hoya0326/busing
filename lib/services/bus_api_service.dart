@@ -181,19 +181,37 @@ class BusApiService {
       }
 
       if (items.isNotEmpty) {
-        realTimeArrivals = items.map((item) {
-          final lineName = item['LINE_NAME'] ?? item['lineName'] ?? item['SHORT_LINE_NAME'] ?? '버스';
-          final remainMinVal = item['REMAIN_MIN'] ?? item['remainMin'] ?? '0';
-          final dirEnd = item['DIR_END'] ?? item['dirEnd'] ?? '종점';
-          final remainStop = item['REMAIN_STOP'] ?? item['remainStop'] ?? '-';
+        // 💡 [수석 개발자] 노선별로 그룹화하여 첫 번째와 두 번째 도착 정보를 추출
+        final Map<String, List<dynamic>> grouped = {};
+        for (var item in items) {
+          final name = (item['LINE_NAME'] ?? item['lineName'] ?? item['SHORT_LINE_NAME'] ?? '버스').toString();
+          grouped.putIfAbsent(name, () => []).add(item);
+        }
+
+        realTimeArrivals = grouped.entries.map((entry) {
+          final busName = entry.key;
+          final busItems = entry.value;
+          
+          // 도착 시간순 정렬 (혹시 모를 중복 대비)
+          busItems.sort((a, b) {
+            final minA = int.tryParse((a['REMAIN_MIN'] ?? '999').toString()) ?? 999;
+            final minB = int.tryParse((b['REMAIN_MIN'] ?? '999').toString()) ?? 999;
+            return minA.compareTo(minB);
+          });
+
+          final first = busItems[0];
+          final second = busItems.length > 1 ? busItems[1] : null;
 
           return BusRouteInfo(
-            busName: lineName.toString(),
-            busArrivalRemaining: int.tryParse(remainMinVal.toString()) ?? 0,
-            walkTimeRemaining: 0, 
-            travelDuration: 15, 
-            totalDuration: (int.tryParse(remainMinVal.toString()) ?? 0) + 15,
-            routeDescription: '$dirEnd 방면 ($remainStop구간 전)',
+            busName: busName,
+            busArrivalRemaining: int.tryParse((first['REMAIN_MIN'] ?? '0').toString()) ?? 0,
+            walkTimeRemaining: 0,
+            travelDuration: 15,
+            totalDuration: (int.tryParse((first['REMAIN_MIN'] ?? '0').toString()) ?? 0) + 15,
+            routeDescription: '${first['DIR_END'] ?? '종점'} 방면 (${first['REMAIN_STOP'] ?? '-'}구간 전)',
+            stopsRemaining: first['REMAIN_STOP'] != '-' ? '${first['REMAIN_STOP']}개 전' : null,
+            nextBusArrivalRemaining: second != null ? (int.tryParse((second['REMAIN_MIN'] ?? '').toString())) : null,
+            nextBusStopsRemaining: second != null ? (second['REMAIN_STOP'] != '-' ? '${second['REMAIN_STOP']}개 전' : null) : null,
           );
         }).toList();
 

@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tz;
@@ -14,11 +15,22 @@ class NotificationService {
 
   Future<void> init() async {
     const AndroidInitializationSettings androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
-    const DarwinInitializationSettings iosSettings = DarwinInitializationSettings();
+    const DarwinInitializationSettings iosSettings = DarwinInitializationSettings(
+      requestAlertPermission: true,
+      requestBadgePermission: true,
+      requestSoundPermission: true,
+    );
     
     await _plugin.initialize(
       const InitializationSettings(android: androidSettings, iOS: iosSettings),
     );
+
+    // 💡 [수석 개발자] Android 13+ 알림 권한 요청
+    if (Platform.isAndroid) {
+      final androidPlugin = _plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+      await androidPlugin?.requestNotificationsPermission();
+    }
+
     tz.initializeTimeZones();
   }
 
@@ -35,27 +47,78 @@ class NotificationService {
       debugPrint('🧹 [Notification] 기존 알람을 모두 초기화했습니다.');
 
       // 2. 새로운 알람 스케줄링
-      await _plugin.zonedSchedule(
-        id,
-        title,
-        body,
-        tz.TZDateTime.from(scheduledDate, tz.local),
-        const NotificationDetails(
-          android: AndroidNotificationDetails(
-            'routine_bus_channel',
-            '승하차 알림',
-            importance: Importance.max,
-            priority: Priority.high,
+      try {
+        await _plugin.zonedSchedule(
+          id,
+          title,
+          body,
+          tz.TZDateTime.from(scheduledDate, tz.local),
+          const NotificationDetails(
+            android: AndroidNotificationDetails(
+              'routine_bus_channel',
+              '승하차 알림',
+              importance: Importance.max,
+              priority: Priority.high,
+            ),
+            iOS: DarwinNotificationDetails(),
           ),
-          iOS: DarwinNotificationDetails(),
-        ),
-        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-        uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
-      );
+          androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+          uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
+        );
+      } catch (e) {
+        if (e.toString().contains('exact_alarms_not_permitted')) {
+          debugPrint('⚠️ [Notification] Exact alarm 권한 없음. Inexact 모드로 전환합니다.');
+          await _plugin.zonedSchedule(
+            id,
+            title,
+            body,
+            tz.TZDateTime.from(scheduledDate, tz.local),
+            const NotificationDetails(
+              android: AndroidNotificationDetails(
+                'routine_bus_channel',
+                '승하차 알림',
+                importance: Importance.max,
+                priority: Priority.high,
+              ),
+              iOS: DarwinNotificationDetails(),
+            ),
+            androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle, // 💡 Fallback
+            uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
+          );
+        } else {
+          rethrow;
+        }
+      }
       
       debugPrint('⏰ [Notification] 새 알람 등록 완료: $scheduledDate');
     } catch (e) {
       debugPrint('❌ [Notification] 알람 교체 실패: $e');
+    }
+  }
+
+  Future<void> showImmediate({
+    required int id,
+    required String title,
+    required String body,
+  }) async {
+    try {
+      await _plugin.show(
+        id,
+        title,
+        body,
+        const NotificationDetails(
+          android: AndroidNotificationDetails(
+            'last_bus_channel',
+            '막차 알림',
+            importance: Importance.max,
+            priority: Priority.high,
+            playSound: true,
+          ),
+          iOS: DarwinNotificationDetails(presentAlert: true, presentSound: true),
+        ),
+      );
+    } catch (e) {
+      debugPrint('❌ [Notification] 즉시 알림 실패: $e');
     }
   }
 

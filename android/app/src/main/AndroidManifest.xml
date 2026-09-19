@@ -4,16 +4,16 @@
     <!-- 위치 권한: 사용자의 현재 위치를 파악하고 지도에 표시하기 위해 필요합니다. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- 알림 및 진동 권한: 실제 단말기(Android 13+)에서 실시간 및 막차 푸시 알림을 전달하기 위해 필요합니다. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
     <application
         android:label="busing"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="true">
-
-        <meta-data
-            android:name="io.flutter.embedding.android.EnableImpeller"
-            android:value="false" />
 
         <activity
             android:name=".MainActivity"
@@ -42,6 +42,19 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!-- 💡 [수석 개발자] 실제 스마트폰 홈 화면 및 잠금화면 위젯 리시버 등록 -->
+        <receiver
+            android:name=".BusingWidgetProvider"
+            android:exported="true"
+            android:label="버씽 실시간 막차 위젯">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/busing_widget_info" />
+        </receiver>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and
