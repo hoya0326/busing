@@ -14,7 +14,7 @@ class NotificationService {
   final FlutterLocalNotificationsPlugin _plugin = FlutterLocalNotificationsPlugin();
 
   Future<void> init() async {
-    const AndroidInitializationSettings androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const AndroidInitializationSettings androidSettings = AndroidInitializationSettings('@drawable/ic_notification');
     const DarwinInitializationSettings iosSettings = DarwinInitializationSettings(
       requestAlertPermission: true,
       requestBadgePermission: true,
@@ -25,10 +25,11 @@ class NotificationService {
       const InitializationSettings(android: androidSettings, iOS: iosSettings),
     );
 
-    // 💡 [수석 개발자] Android 13+ 알림 권한 요청
+    // 💡 [수석 개발자] Android 13+ 알림 및 14+ 정밀 알람 권한 요청
     if (Platform.isAndroid) {
       final androidPlugin = _plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
       await androidPlugin?.requestNotificationsPermission();
+      await androidPlugin?.requestExactAlarmsPermission();
     }
 
     tz.initializeTimeZones();
