@@ -15,6 +15,7 @@ import 'services/tmap_service.dart';
 import 'usecases/register_alarm_usecase.dart'; // 💡 추가
 import 'services/toast_service.dart'; // 💡 추가
 import 'services/notification_service.dart'; // 💡 추가
+import 'package:shared_preferences/shared_preferences.dart'; // 💡 추가
 
 enum WidgetBarMode { main, stopDetail, lineInfo, lineSchedule, lineDetails }
 
@@ -148,18 +149,28 @@ class AppProvider extends ChangeNotifier {
   }
 
   /// 💡 [수석 개발자] 백그라운드 막차 자동 탐색 로직
-  /// 등록된 목적지들에 대해 현재 위치에서의 경로를 분석하여 막차가 임박했는지 확인합니다.
+  /// 등록된 목적지 및 요일별 루틴에 대해 현재 위치에서의 경로를 분석하여 실시간 정보를 위젯에 동기화합니다.
   Future<void> _checkLastBusForAlarms() async {
-    if (_destinationAlarms.isEmpty) return;
+    if (_destinationAlarms.isEmpty && _routines.isEmpty) {
+      await _updateWidgetData("정보 없음", "도착정보없음", "설정된 목적지 없음");
+      return;
+    }
     
-    // 💡 [수석 개발자] 막차 트래킹 가동 시간대: 18:00(오후 6시) ~ 00:00(자정)
     final now = DateTime.now();
     final hour = now.hour;
     final minute = now.minute;
-    final isLastBusTrackingTime = (hour >= 18);
+    
+    // 요일 매핑
+    final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+    final currentDayStr = weekdays[now.weekday - 1];
+    final todayRoutines = _routines.where((r) => r.enabled && r.day == currentDayStr).toList();
 
-    if (!isLastBusTrackingTime) {
-      debugPrint('🌙 [LastBus] 현재 시간대(${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')})는 대기 시간입니다. (18:00 ~ 00:00 사이에만 가동)');
+    // 💡 [수석 개발자] 막차 트래킹 가동 시간대(18:00~00:00) 또는 오늘 활성화된 루틴이 있는 경우 가동
+    final isLastBusTrackingTime = (hour >= 18);
+    final hasActiveRoutineToday = todayRoutines.isNotEmpty;
+
+    if (!isLastBusTrackingTime && !hasActiveRoutineToday) {
+      await _updateWidgetData("대기 중", "도착정보없음", "설정된 목적지 없음");
       return;
     }
     
@@ -168,6 +179,7 @@ class AppProvider extends ChangeNotifier {
     
     final origin = LatLng(currentPos.x, currentPos.y);
 
+    // 1. 목적지별 막차 알림 체크 우선 수행
     for (var alarm in _destinationAlarms) {
       if (!alarm.isEnabled) continue;
 
@@ -183,19 +195,60 @@ class AppProvider extends ChangeNotifier {
             final bestRoute = routes.first;
             debugPrint('🔍 [Background Check] ${alarm.destination.name} 경로 확인: ${bestRoute.busName} (${bestRoute.statusText})');
             
+            String remainStr = bestRoute.busArrivalRemaining < 0 ? '도착정보없음' : '${bestRoute.busArrivalRemaining}';
+            String stopInfo = '${alarm.destination.name} · 도보 ${bestRoute.walkTimeRemaining}분';
+            await _updateWidgetData(bestRoute.busName, remainStr, stopInfo);
+
             if (bestRoute.status == RouteStatus.tight || bestRoute.status == RouteStatus.hard) {
               _triggerLastBusNotification(alarm.destination.name, bestRoute.busName);
             }
+            return;
+          } else {
+            await _updateWidgetData("정보 없음", "도착정보없음", alarm.destination.name);
           }
+        } else {
+          await _updateWidgetData("정보 없음", "도착정보없음", alarm.destination.name);
         }
       } catch (e) {
-        if (e.toString().contains('SocketException') || e.toString().contains('host lookup')) {
-           debugPrint('🌐 [Background Check] 네트워크 연결 끊김으로 대기 중...');
-        } else {
-           debugPrint('⚠️ [AlarmCheck] 실패: $e');
-        }
+        await _updateWidgetData("정보 없음", "도착정보없음", alarm.destination.name);
       }
     }
+
+    // 2. 목적지 알림이 없을 경우 요일별 루틴 체크 수행
+    for (var routine in todayRoutines) {
+      try {
+        final results = await _kakaoLocalService.searchKeywords(routine.to);
+        if (results.isNotEmpty) {
+          final destLat = results[0]['lat'] as double;
+          final destLng = results[0]['lng'] as double;
+          final dest = LatLng(destLat, destLng);
+
+          final tmapData = await _tmapService.getTransitRoute(origin, dest);
+          if (tmapData != null) {
+            final parsed = _tmapService.parseTmapData(tmapData);
+            final List<BusRouteInfo> routes = List<BusRouteInfo>.from(parsed['busRoutes'] ?? []);
+            if (routes.isNotEmpty) {
+              final bestRoute = routes.first;
+              String remainStr = bestRoute.busArrivalRemaining < 0 ? '도착정보없음' : '${bestRoute.busArrivalRemaining}';
+              String stopInfo = '${routine.to} · 도보 ${bestRoute.walkTimeRemaining}분';
+              await _updateWidgetData(bestRoute.busName, remainStr, stopInfo);
+              return;
+            }
+          }
+        }
+        await _updateWidgetData("정보 없음", "도착정보없음", routine.to);
+      } catch (e) {
+        await _updateWidgetData("정보 없음", "도착정보없음", routine.to);
+      }
+    }
+  }
+
+  // 💡 [수석 개발자] 네이티브 위젯(Android/iOS)을 위한 SharedPreferences 데이터 기록
+  Future<void> _updateWidgetData(String busName, String remainMin, String stopName) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('widget_busName', busName);
+    await prefs.setString('widget_remainMin', remainMin);
+    await prefs.setString('widget_stopName', stopName);
   }
 
   void _triggerLastBusNotification(String destName, String busName) {
