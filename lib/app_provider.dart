@@ -15,6 +15,8 @@ import 'services/tmap_service.dart';
 import 'usecases/register_alarm_usecase.dart'; // 💡 추가
 import 'services/toast_service.dart'; // 💡 추가
 import 'services/notification_service.dart'; // 💡 추가
+import 'package:shared_preferences/shared_preferences.dart'; // 💡 추가
+import 'package:flutter/services.dart'; // 💡 MethodChannel 사용을 위해 추가
 
 enum WidgetBarMode { main, stopDetail, lineInfo, lineSchedule, lineDetails }
 
@@ -137,10 +139,71 @@ class AppProvider extends ChangeNotifier {
     _state = HomeState(
       pins: [MapPin(x: 35.1601, y: 126.8515, type: PinType.depart)]
     );
-    _startRefreshTimer(); // 💡 30초마다 UI 갱신 트리거
+    _startRefreshTimer();
+
+    // 💡 푸시 알림 클릭 시 해당 목적지 길안내 즉시 가동
+    NotificationService().onNotificationClick = (payload) {
+      if (payload.isNotEmpty) {
+        handleLaunchDestination(payload);
+      }
+    };
+
+    // 💡 앱 완전 종료 후 알림 및 위젯 클릭 진입 체크
+    NotificationService().checkLaunchNotification();
+    checkWidgetLaunch();
+  }
+
+  Future<void> handleLaunchDestination(String destName) async {
+    if (destName.isEmpty || destName == '설정된 목적지 없음') return;
+    
+    debugPrint('🚀 [Provider] 위젯/알림 터치로 자동 길안내 실행: $destName');
+
+    try {
+      final results = await _kakaoLocalService.searchKeywords(destName);
+      if (results.isNotEmpty) {
+        final lat = results[0]['lat'] as double;
+        final lng = results[0]['lng'] as double;
+        setArriveLabel(destName, lat: lat, lng: lng);
+      } else {
+        setArriveLabel(destName);
+      }
+    } catch (_) {
+      setArriveLabel(destName);
+    }
+
+    await startGuidance();
+    _updateState(_state.copyWith(
+      barMode: WidgetBarMode.main,
+      isGuidanceActive: true,
+    ));
+    notifyListeners();
+  }
+
+  Future<void> checkWidgetLaunch() async {
+    try {
+      final platform = MethodChannel('com.example.busing/widget');
+      final bool clicked = await platform.invokeMethod('checkWidgetClick');
+      if (clicked) {
+        final prefs = await SharedPreferences.getInstance();
+        final count = prefs.getInt('widget_count') ?? 1;
+        var index = prefs.getInt('widget_index') ?? 0;
+        if (index < 0) index = 0;
+        if (index >= count) index = count - 1;
+
+        final dest = prefs.getString('widget_destination_$index') ?? prefs.getString('widget_destination');
+        if (dest != null && dest.isNotEmpty) {
+          await handleLaunchDestination(dest);
+        }
+      }
+    } catch (e) {
+      debugPrint('⚠️ [Widget Launch Check] 실패: $e');
+    }
   }
 
   void _startRefreshTimer() {
+    Timer.periodic(const Duration(seconds: 2), (timer) {
+      checkWidgetLaunch(); // 💡 백그라운드에서 위젯 터치 시 즉시 감지
+    });
     Timer.periodic(const Duration(minutes: 1), (timer) {
       _checkLastBusForAlarms(); // 💡 1분마다 목적지별 막차 체크
       notifyListeners();
@@ -148,18 +211,28 @@ class AppProvider extends ChangeNotifier {
   }
 
   /// 💡 [수석 개발자] 백그라운드 막차 자동 탐색 로직
-  /// 등록된 목적지들에 대해 현재 위치에서의 경로를 분석하여 막차가 임박했는지 확인합니다.
+  /// 등록된 목적지 및 요일별 루틴에 대해 현재 위치에서의 경로를 분석하여 실시간 정보를 위젯에 동기화합니다.
   Future<void> _checkLastBusForAlarms() async {
-    if (_destinationAlarms.isEmpty) return;
+    if (_destinationAlarms.isEmpty && _routines.isEmpty) {
+      await _updateWidgetData("대기 중", "막차시간이 아닙니다", "등록된 목적지가 없습니다");
+      return;
+    }
     
-    // 💡 [수석 개발자] 막차 트래킹 가동 시간대: 18:00(오후 6시) ~ 00:00(자정)
     final now = DateTime.now();
     final hour = now.hour;
     final minute = now.minute;
-    final isLastBusTrackingTime = (hour >= 18);
+    
+    // 요일 매핑
+    final weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+    final currentDayStr = weekdays[now.weekday - 1];
+    final todayRoutines = _routines.where((r) => r.enabled && r.day == currentDayStr).toList();
 
-    if (!isLastBusTrackingTime) {
-      debugPrint('🌙 [LastBus] 현재 시간대(${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')})는 대기 시간입니다. (18:00 ~ 00:00 사이에만 가동)');
+    // 💡 [수석 개발자] 막차 트래킹 가동 시간대(18:00~00:00) 또는 오늘 활성화된 루틴이 있는 경우 가동
+    final isLastBusTrackingTime = (hour >= 18);
+    final hasActiveRoutineToday = todayRoutines.isNotEmpty;
+
+    if (!isLastBusTrackingTime && !hasActiveRoutineToday) {
+      await _updateWidgetData("대기 중", "막차시간이 아닙니다", "18:00 ~ 00:00 사이 가동됩니다");
       return;
     }
     
@@ -168,6 +241,9 @@ class AppProvider extends ChangeNotifier {
     
     final origin = LatLng(currentPos.x, currentPos.y);
 
+    List<Map<String, String>> widgetItems = [];
+
+    // 1. 목적지별 막차 알림 데이터 수집
     for (var alarm in _destinationAlarms) {
       if (!alarm.isEnabled) continue;
 
@@ -179,40 +255,274 @@ class AppProvider extends ChangeNotifier {
           final parsed = _tmapService.parseTmapData(tmapData);
           final List<BusRouteInfo> routes = List<BusRouteInfo>.from(parsed['busRoutes'] ?? []);
           
-          if (routes.isNotEmpty) {
-            final bestRoute = routes.first;
-            debugPrint('🔍 [Background Check] ${alarm.destination.name} 경로 확인: ${bestRoute.busName} (${bestRoute.statusText})');
-            
-            if (bestRoute.status == RouteStatus.tight || bestRoute.status == RouteStatus.hard) {
-              _triggerLastBusNotification(alarm.destination.name, bestRoute.busName);
+          for (var route in routes) {
+            final startStop = route.startStopName ?? '출발 정류장';
+            final remainStr = route.busArrivalRemaining < 0 ? '도착정보없음' : '${route.busArrivalRemaining}';
+            final stopInfo = '🚏 $startStop ➔ ${alarm.destination.name} (도보 ${route.walkTimeRemaining}분)';
+
+            widgetItems.add({
+              'busName': route.busName,
+              'remainMin': remainStr,
+              'stopName': stopInfo,
+              'destinationName': alarm.destination.name,
+            });
+
+            // 진짜 막차인 경우 즉시 푸시 알림 발송 (실시간 정보 유효 시 단 1회)
+            if (route.busArrivalRemaining >= 0 && isAfterPenultimateBusSchedule(route.busName)) {
+              _triggerLastBusNotification(
+                destName: alarm.destination.name,
+                busName: route.busName,
+                stopName: startStop,
+                remainMin: route.busArrivalRemaining,
+                walkMin: route.walkTimeRemaining,
+              );
             }
           }
         }
       } catch (e) {
-        if (e.toString().contains('SocketException') || e.toString().contains('host lookup')) {
-           debugPrint('🌐 [Background Check] 네트워크 연결 끊김으로 대기 중...');
-        } else {
-           debugPrint('⚠️ [AlarmCheck] 실패: $e');
-        }
+        debugPrint('⚠️ [Background Check Error] ${alarm.destination.name}: $e');
       }
+    }
+
+    // 2. 요일별 루틴 체크 및 데이터 수집
+    for (var routine in todayRoutines) {
+      try {
+        final results = await _kakaoLocalService.searchKeywords(routine.to);
+        if (results.isNotEmpty) {
+          final destLat = results[0]['lat'] as double;
+          final destLng = results[0]['lng'] as double;
+          final dest = LatLng(destLat, destLng);
+
+          final tmapData = await _tmapService.getTransitRoute(origin, dest);
+          if (tmapData != null) {
+            final parsed = _tmapService.parseTmapData(tmapData);
+            final List<BusRouteInfo> routes = List<BusRouteInfo>.from(parsed['busRoutes'] ?? []);
+            
+            for (var route in routes) {
+              final startStop = route.startStopName ?? '출발 정류장';
+              final remainStr = route.busArrivalRemaining < 0 ? '도착정보없음' : '${route.busArrivalRemaining}';
+              final stopInfo = '🚏 $startStop ➔ ${routine.to} (도보 ${route.walkTimeRemaining}분)';
+
+              widgetItems.add({
+                'busName': route.busName,
+                'remainMin': remainStr,
+                'stopName': stopInfo,
+                'destinationName': routine.to,
+              });
+
+              if (route.busArrivalRemaining >= 0 && isAfterPenultimateBusSchedule(route.busName)) {
+                _triggerLastBusNotification(
+                  destName: routine.to,
+                  busName: route.busName,
+                  stopName: startStop,
+                  remainMin: route.busArrivalRemaining,
+                  walkMin: route.walkTimeRemaining,
+                );
+              }
+
+              // 루틴 탑승 알림 시점 체크 (설정 시각 10분 전 ~ 정시)
+              final routineMinutes = _convertToMinutes(routine.time);
+              final currentMinutes = hour * 60 + minute;
+              final diff = routineMinutes - currentMinutes;
+
+              if (diff >= 0 && diff <= 10 && route.busArrivalRemaining >= 0) {
+                final routineKey = "${routine.id}_${now.year}_${now.month}_${now.day}";
+                if (!_notifiedRoutineKeys.contains(routineKey)) {
+                  _notifiedRoutineKeys.add(routineKey);
+
+                  final busName = route.busName;
+                  final walkMin = route.walkTimeRemaining;
+                  final busArrMin = '${route.busArrivalRemaining}분 후 도착 예정';
+                  final routineName = (routine.name?.trim().isNotEmpty == true) ? routine.name! : '루틴';
+
+                  NotificationService().showImmediate(
+                    id: 20000 + routine.id,
+                    title: '🚌 [$routineName] $busName번 탑승 안내',
+                    body: '🚏 $startStop (도보 ${walkMin}분) | ⏱️ $busArrMin\n출발할 시간입니다. 지금 이동하세요!',
+                    payload: routine.to,
+                  );
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('⚠️ [Background Check Routine Error] ${routine.to}: $e');
+      }
+    }
+
+    // 💡 [수석 개발자] 정렬: 실시간 도착 정보(분)가 유효한 버스를 가장 첫번째(1/N)로 최우선 배치!
+    widgetItems.sort((a, b) {
+      final aHasRealTime = a['remainMin'] != '도착정보없음' && (int.tryParse(a['remainMin'] ?? '') ?? -1) >= 0;
+      final bHasRealTime = b['remainMin'] != '도착정보없음' && (int.tryParse(b['remainMin'] ?? '') ?? -1) >= 0;
+
+      if (aHasRealTime && !bHasRealTime) return -1;
+      if (!aHasRealTime && bHasRealTime) return 1;
+
+      if (aHasRealTime && bHasRealTime) {
+        final aArr = int.tryParse(a['remainMin']!) ?? 999;
+        final bArr = int.tryParse(b['remainMin']!) ?? 999;
+        return aArr.compareTo(bArr); // 도착 잔여 시각 오름차순 정렬
+      }
+
+      return 0;
+    });
+
+    if (widgetItems.isNotEmpty) {
+      await _updateWidgetDataList(widgetItems);
+    } else {
+      await _updateWidgetData("대기 중", "막차시간이 아닙니다", "18:00 ~ 00:00 사이 가동됩니다");
     }
   }
 
-  void _triggerLastBusNotification(String destName, String busName) {
-    debugPrint('🔔 [NOTIFICATION] $destName행 막차 알림! $busName 버스가 곧 끊깁니다.');
-    
-    // 💡 [수석 개발자] 로컬 알림 서비스 호출
+  Future<void> _updateWidgetDataList(List<Map<String, String>> items) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('widget_count', items.length);
+
+    for (int i = 0; i < items.length; i++) {
+      final item = items[i];
+      await prefs.setString('widget_busName_$i', item['busName'] ?? '');
+      await prefs.setString('widget_remainMin_$i', item['remainMin'] ?? '');
+      await prefs.setString('widget_stopName_$i', item['stopName'] ?? '');
+      await prefs.setString('widget_destination_$i', item['destinationName'] ?? '');
+    }
+
+    if (items.isNotEmpty) {
+      final first = items.first;
+      await prefs.setString('widget_busName', first['busName'] ?? '');
+      await prefs.setString('widget_remainMin', first['remainMin'] ?? '');
+      await prefs.setString('widget_stopName', first['stopName'] ?? '');
+      await prefs.setString('widget_destination', first['destinationName'] ?? '');
+    }
+
+    try {
+      const platform = MethodChannel('com.example.busing/widget');
+      await platform.invokeMethod('updateWidget', {
+        'items': items,
+        'count': items.length,
+      });
+    } catch (e) {
+      debugPrint('⚠️ [Widget Channel] 위젯 업데이트 채널 호출 실패: $e');
+    }
+  }
+
+  // 💡 [수석 개발자] 네이티브 위젯(Android/iOS)을 위한 SharedPreferences 데이터 기록 및 위젯 갱신
+  Future<void> _updateWidgetData(String busName, String remainMin, String stopName, {String? destinationName}) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('widget_busName', busName);
+    await prefs.setString('widget_remainMin', remainMin);
+    await prefs.setString('widget_stopName', stopName);
+    if (destinationName != null && destinationName.isNotEmpty) {
+      await prefs.setString('widget_destination', destinationName);
+    }
+
+    try {
+      final platform = MethodChannel('com.example.busing/widget');
+      // iOS 연동을 위해 데이터를 함께 넘김
+      await platform.invokeMethod('updateWidget', {
+        'busName': busName,
+        'remainMin': remainMin,
+        'stopName': stopName,
+        'destinationName': destinationName ?? ''
+      });
+    } catch (e) {
+      debugPrint('⚠️ [Widget Channel] 위젯 업데이트 채널 호출 실패: $e');
+    }
+  }
+
+  final Set<String> _notifiedLastBusKeys = {};
+  final Set<String> _notifiedRoutineKeys = {};
+
+  /// 💡 [수석 개발자] 버스 노선의 시간표를 조회하여,
+  /// 현재 시각이 해당 버스 노선의 '마지막에서 2번째 배차 시간' 이후인 경우에만 막차 알림 발송을 허용합니다.
+  bool isAfterPenultimateBusSchedule(String busName) {
+    if (busName.isEmpty) return false;
+
+    // 버스 이름 정제 (예: "첨단30번" -> "첨단30")
+    final cleanName = busName.replaceAll('번', '').replaceAll(RegExp(r'\s+'), '').trim();
+
+    // gwangjuBusSchedules에서 매칭되는 노선 탐색
+    final matchingSchedules = gwangjuBusSchedules.where((s) {
+      final name = s.routeName.replaceAll('번', '').replaceAll(RegExp(r'\s+'), '').trim();
+      return name == cleanName || cleanName.contains(name) || name.contains(cleanName);
+    }).toList();
+
+    if (matchingSchedules.isEmpty) {
+      // 시간표 데이터가 없는 경우 21시 이후일 때만 막차판단 수행
+      return DateTime.now().hour >= 21;
+    }
+
+    final now = DateTime.now();
+    final currentMinutes = now.hour * 60 + now.minute;
+
+    int latestPenultimateMinutes = -1;
+
+    for (var schedule in matchingSchedules) {
+      List<String> times = [];
+      if (now.weekday == DateTime.saturday) {
+        times = schedule.saturday;
+      } else if (now.weekday == DateTime.sunday) {
+        times = schedule.sunday;
+      } else {
+        times = schedule.weekday;
+      }
+
+      if (times.length >= 2) {
+        final penultimateTimeStr = times[times.length - 2]; // 마지막에서 2번째 배차 시각
+        final parts = penultimateTimeStr.split(':');
+        if (parts.length == 2) {
+          final h = int.tryParse(parts[0]) ?? 0;
+          final m = int.tryParse(parts[1]) ?? 0;
+          final pMinutes = h * 60 + m;
+          if (pMinutes > latestPenultimateMinutes) {
+            latestPenultimateMinutes = pMinutes;
+          }
+        }
+      }
+    }
+
+    if (latestPenultimateMinutes == -1) {
+      return now.hour >= 21;
+    }
+
+    debugPrint('⏱️ [LastBusScheduleCheck] $busName - 현재: ${now.hour}:${now.minute} ($currentMinutes분) vs 2번째 막차 배차: ${latestPenultimateMinutes ~/ 60}:${latestPenultimateMinutes % 60} ($latestPenultimateMinutes분)');
+
+    // 현재 시간이 마지막에서 2번째 배차 시간 이후인 경우에만 막차 판별 허용
+    return currentMinutes >= latestPenultimateMinutes;
+  }
+
+  void _triggerLastBusNotification({
+    required String destName,
+    required String busName,
+    required String stopName,
+    required int remainMin,
+    required int walkMin,
+  }) {
+    final now = DateTime.now();
+    final key = "${destName}_${busName}_${now.year}_${now.month}_${now.day}";
+
+    // 💡 한 버스당 하루에 단 한 번만 알림을 발송 (1분마다 중복 발송 방지)
+    if (_notifiedLastBusKeys.contains(key)) {
+      return;
+    }
+    _notifiedLastBusKeys.add(key);
+
+    debugPrint('🔔 [NOTIFICATION] $destName행 진짜 막차 알림 발송: $busName');
+
+    final remainStr = remainMin < 0 ? '잠시 후 도착' : '$remainMin분 후 도착 예정';
+
+    // 💡 핵심 4개 정보만 표시하고 터치 시 자동 길안내를 위해 payload: destName 전달
     NotificationService().showImmediate(
       id: 999,
-      title: '🚇 막차 임박 알림!',
-      body: '[$destName행] $busName 막차가 곧 끊깁니다. 지금 출발하세요!',
+      title: '🚨 [막차 경고] $busName번 ($destName행)',
+      body: '🚏 $stopName (도보 ${walkMin}분) | ⏱️ $remainStr\n지금 바로 출발하세요!',
+      payload: destName,
     );
 
     _updateState(_state.copyWith(
       alarmMessage: '⏰ [$destName행] $busName 막차가 임박했습니다! 지금 출발하세요.',
     ));
-    
-    // 💡 30초 후 알림 메시지 자동 제거
+
     Timer(const Duration(seconds: 30), () {
       _updateState(_state.copyWith(alarmMessage: null));
     });
@@ -1233,8 +1543,12 @@ class AppProvider extends ChangeNotifier {
     final rawRoutines = await _storageService.getRoutines();
     // 💡 [수석 개발자] 시간순 정렬 (오전 12시부터 오후 11시 59분까지)
     _routines = _sortRoutines(rawRoutines);
+    for (var r in _routines) {
+      _syncRoutineAlarm(r);
+    }
     _isLoadingRoutines = false;
     notifyListeners();
+    _checkLastBusForAlarms(); // 💡 로드 완료 시 위젯 데이터 즉시 연동
   }
 
   List<Routine> _sortRoutines(List<Routine> list) {
@@ -1263,6 +1577,65 @@ class AppProvider extends ChangeNotifier {
     } catch (e) { return 0; }
   }
 
+  DateTime? _calculateNextRoutineDateTime(Routine routine) {
+    final dayMap = {"월": 1, "화": 2, "수": 3, "목": 4, "금": 5, "토": 6, "일": 7};
+    final targetWeekday = dayMap[routine.day];
+    if (targetWeekday == null) return null;
+
+    final parts = routine.time.trim().split(' ');
+    int hour = 0;
+    int minute = 0;
+
+    if (parts.length >= 2) {
+      final ampm = parts[0];
+      final hm = parts[1].split(':');
+      if (hm.length >= 2) {
+        hour = int.tryParse(hm[0]) ?? 0;
+        minute = int.tryParse(hm[1]) ?? 0;
+        if (ampm == '오후' && hour != 12) hour += 12;
+        if (ampm == '오전' && hour == 12) hour = 0;
+      }
+    } else if (parts.length == 1 && parts[0].contains(':')) {
+      final hm = parts[0].split(':');
+      hour = int.tryParse(hm[0]) ?? 0;
+      minute = int.tryParse(hm[1]) ?? 0;
+    }
+
+    final now = DateTime.now();
+    int daysAhead = targetWeekday - now.weekday;
+
+    if (daysAhead < 0) {
+      daysAhead += 7;
+    } else if (daysAhead == 0) {
+      final nowMinutes = now.hour * 60 + now.minute;
+      final routineMinutes = hour * 60 + minute;
+      if (nowMinutes >= routineMinutes) {
+        daysAhead = 7;
+      }
+    }
+
+    return DateTime(now.year, now.month, now.day + daysAhead, hour, minute, 0);
+  }
+
+  void _syncRoutineAlarm(Routine routine) {
+    final alarmId = 10000 + routine.id;
+    if (routine.enabled) {
+      final nextDate = _calculateNextRoutineDateTime(routine);
+      if (nextDate != null) {
+        final routineName = (routine.name?.trim().isNotEmpty == true) ? routine.name! : '출근 루틴';
+        NotificationService().scheduleRoutineAlarm(
+          id: alarmId,
+          title: '🚌 [$routineName] 탑승 준비 알림',
+          body: '${routine.from} ➔ ${routine.to} (${routine.time} 예정) 출발 시간입니다!',
+          scheduledDate: nextDate,
+          payload: routine.to,
+        );
+      }
+    } else {
+      NotificationService().cancelRoutineAlarm(alarmId);
+    }
+  }
+
   void addRoutine({
     required String name,
     required String from,
@@ -1285,12 +1658,42 @@ class AppProvider extends ChangeNotifier {
     _routines.add(newRoutine);
     _routines = _sortRoutines(_routines);
     _storageService.saveRoutines(_routines);
+    _syncRoutineAlarm(newRoutine);
     notifyListeners();
+  }
+
+  void updateRoutine({
+    required int id,
+    required String name,
+    required String from,
+    required String to,
+    required String time,
+    required String day,
+  }) {
+    final index = _routines.indexWhere((r) => r.id == id);
+    if (index != -1) {
+      final updated = Routine(
+        id: id,
+        name: name.trim().isNotEmpty ? name.trim() : '출근 루틴',
+        day: day,
+        time: time,
+        from: from,
+        to: to,
+        bus: _routines[index].bus,
+        enabled: _routines[index].enabled,
+      );
+      _routines[index] = updated;
+      _routines = _sortRoutines(_routines);
+      _storageService.saveRoutines(_routines);
+      _syncRoutineAlarm(updated);
+      notifyListeners();
+    }
   }
 
   void deleteRoutine(int id) {
     _routines.removeWhere((r) => r.id == id);
     _storageService.saveRoutines(_routines);
+    NotificationService().cancelRoutineAlarm(10000 + id);
     notifyListeners();
   }
 
@@ -1299,6 +1702,7 @@ class AppProvider extends ChangeNotifier {
     if (index != -1) {
       _routines[index].enabled = !_routines[index].enabled;
       _storageService.saveRoutines(_routines);
+      _syncRoutineAlarm(_routines[index]);
       notifyListeners();
     }
   }
@@ -1320,6 +1724,7 @@ class AppProvider extends ChangeNotifier {
     _darkMode = await _storageService.getDarkMode(); // 💡 다크모드 로드
     _destinationAlarms = await _storageService.getDestinationAlarms(); // 💡 목적지 알람 로드
     notifyListeners();
+    _checkLastBusForAlarms(); // 💡 로드 완료 시 위젯 데이터 즉시 연동
   }
 
   void setUserName(String name) {

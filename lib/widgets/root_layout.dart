@@ -9,22 +9,28 @@ class RootLayout extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final location = GoRouterState.of(context).uri.path;
-
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    
+    // 💡 [수석 개발자] 키보드가 열려 있는지 화면 하단 여백(viewInsets)을 통해 감지
+    final bool isKeyboardOpen = MediaQuery.of(context).viewInsets.bottom > 0;
 
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      // 💡 [선택 사항] 안쪽 화면들이 키보드 높이만큼 밀려 올라가는 것을 막으려면 false로 설정
+      // resizeToAvoidBottomInset: false, 
       body: Stack(
         children: [
           Positioned.fill(
             child: child,
           ),
-          Positioned(
-            bottom: 0,
-            left: 0,
-            right: 0,
-            child: _BottomTabBar(currentPath: location),
-          ),
+          // 💡 키보드가 활성화되었을 때는 하단 탭바를 렌더링하지 않아 키보드 위로 떠오르는 현상 방지
+          if (!isKeyboardOpen)
+            Positioned(
+              bottom: 0,
+              left: 0,
+              right: 0,
+              child: _BottomTabBar(currentPath: location),
+            ),
         ],
       ),
     );
