@@ -82,7 +82,7 @@ class ScheduleScreen extends StatelessWidget {
                   backgroundColor: isDark ? const Color(0xFF1A1E2E) : Colors.white,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                 ),
-                onPressed: () => _openAddRoutineModal(context),
+                onPressed: () => _openRoutineModal(context),
                 icon: const Icon(Icons.add, color: Color(0xFF8B91A8), size: 18),
                 label: const Text('루틴 추가', style: TextStyle(color: Color(0xFF8B91A8), fontWeight: FontWeight.w500)),
               ),
@@ -128,109 +128,113 @@ class ScheduleScreen extends StatelessWidget {
 
   Widget _buildRoutineCard(BuildContext context, Routine routine, AppProvider appProvider) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1A1E2E) : Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: isDark ? const Color(0xFF2E3347) : Colors.black.withOpacity(0.05)),
-        boxShadow: isDark ? [] : [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      (routine.name?.trim().isNotEmpty == true) ? routine.name! : '출근 루틴',
-                      style: TextStyle(color: isDark ? const Color(0xFFE8EAF2) : Colors.black87, fontSize: 13, fontWeight: FontWeight.w600),
-                    ),
-                    const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        Text(
-                          routine.time, // 예: "오전 06:00"
-                          style: const TextStyle(color: Color(0xFF3D7EFF), fontSize: 22, fontWeight: FontWeight.bold),
-                        ),
-                        const SizedBox(width: 10),
-                        CupertinoSwitch(
-                          value: routine.enabled,
-                          onChanged: (_) => appProvider.toggleRoutine(routine.id),
-                          activeColor: const Color(0xFF3D7EFF),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              IconButton(
-                icon: const Icon(Icons.close, color: Color(0xFF555D7A), size: 20),
-                onPressed: () => appProvider.deleteRoutine(routine.id),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: Row(
-                  children: [
-                    Container(width: 6, height: 6, decoration: const BoxDecoration(color: Color(0xFF3D7EFF), shape: BoxShape.circle)),
-                    const SizedBox(width: 8),
-                    Expanded(child: Text(routine.from, style: const TextStyle(color: Color(0xFF8B91A8), fontSize: 12), overflow: TextOverflow.ellipsis)),
-                    const Padding(padding: EdgeInsets.symmetric(horizontal: 8), child: Icon(Icons.arrow_forward, size: 12, color: Color(0xFF555D7A))),
-                    Container(width: 6, height: 6, decoration: const BoxDecoration(color: Color(0xFFFF6B6B), shape: BoxShape.circle)),
-                    const SizedBox(width: 8),
-                    Expanded(child: Text(routine.to, style: const TextStyle(color: Color(0xFF8B91A8), fontSize: 12), overflow: TextOverflow.ellipsis)),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 12),
-              SizedBox(
-                height: 32,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF3D7EFF),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                    elevation: 0,
+    return GestureDetector(
+      onTap: () => _openRoutineModal(context, routine: routine),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: isDark ? const Color(0xFF1A1E2E) : Colors.white,
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: isDark ? const Color(0xFF2E3347) : Colors.black.withOpacity(0.05)),
+          boxShadow: isDark ? [] : [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        (routine.name?.trim().isNotEmpty == true) ? routine.name! : '출근 루틴',
+                        style: TextStyle(color: isDark ? const Color(0xFFE8EAF2) : Colors.black87, fontSize: 13, fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Text(
+                            routine.time, // 예: "오전 06:00"
+                            style: const TextStyle(color: Color(0xFF3D7EFF), fontSize: 22, fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(width: 10),
+                          CupertinoSwitch(
+                            value: routine.enabled,
+                            onChanged: (_) => appProvider.toggleRoutine(routine.id),
+                            activeColor: const Color(0xFF3D7EFF),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
-                  onPressed: () {
-                    // 💡 [Figma] 즉시 길안내 시작
-                    appProvider.setDepartLabel(routine.from);
-                    appProvider.setArriveLabel(routine.to);
-                    appProvider.startGuidance();
-                    context.go('/'); // 💡 홈 탭으로 자동 전환
-                  },
-                  child: const Text('길안내', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
                 ),
-              ),
-            ],
-          ),
-        ],
+                IconButton(
+                  icon: const Icon(Icons.close, color: Color(0xFF555D7A), size: 20),
+                  onPressed: () => appProvider.deleteRoutine(routine.id),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: Row(
+                    children: [
+                      Container(width: 6, height: 6, decoration: const BoxDecoration(color: Color(0xFF3D7EFF), shape: BoxShape.circle)),
+                      const SizedBox(width: 8),
+                      Expanded(child: Text(routine.from, style: const TextStyle(color: Color(0xFF8B91A8), fontSize: 12), overflow: TextOverflow.ellipsis)),
+                      const Padding(padding: EdgeInsets.symmetric(horizontal: 8), child: Icon(Icons.arrow_forward, size: 12, color: Color(0xFF555D7A))),
+                      Container(width: 6, height: 6, decoration: const BoxDecoration(color: Color(0xFFFF6B6B), shape: BoxShape.circle)),
+                      const SizedBox(width: 8),
+                      Expanded(child: Text(routine.to, style: const TextStyle(color: Color(0xFF8B91A8), fontSize: 12), overflow: TextOverflow.ellipsis)),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                SizedBox(
+                  height: 32,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF3D7EFF),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      elevation: 0,
+                    ),
+                    onPressed: () {
+                      // 💡 [Figma] 즉시 길안내 시작
+                      appProvider.setDepartLabel(routine.from);
+                      appProvider.setArriveLabel(routine.to);
+                      appProvider.startGuidance();
+                      context.go('/'); // 💡 홈 탭으로 자동 전환
+                    },
+                    child: const Text('길안내', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  void _openAddRoutineModal(BuildContext context) {
+  void _openRoutineModal(BuildContext context, {Routine? routine}) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => const _AddRoutineModal(),
+      builder: (context) => _AddRoutineModal(routine: routine),
     );
   }
 }
 
 class _AddRoutineModal extends StatefulWidget {
-  const _AddRoutineModal();
+  final Routine? routine;
+  const _AddRoutineModal({this.routine});
 
   @override
   State<_AddRoutineModal> createState() => _AddRoutineModalState();
@@ -258,14 +262,33 @@ class _AddRoutineModalState extends State<_AddRoutineModal> {
   @override
   void initState() {
     super.initState();
-    _nameController = TextEditingController();
-    _fromController = TextEditingController();
-    _toController = TextEditingController();
+    final routine = widget.routine;
     
-    // 현재 선택된 요일을 초기값으로 설정
-    final currentDay = context.read<AppProvider>().selectedDay;
-    _dayIdx = _days.indexOf(currentDay);
-    if (_dayIdx == -1) _dayIdx = 0;
+    _nameController = TextEditingController(text: routine?.name ?? '');
+    _fromController = TextEditingController(text: routine?.from ?? '');
+    _toController = TextEditingController(text: routine?.to ?? '');
+
+    if (routine != null) {
+      final dayIdx = _days.indexOf(routine.day);
+      if (dayIdx != -1) _dayIdx = dayIdx;
+
+      final parts = routine.time.trim().split(' ');
+      if (parts.length >= 2) {
+        final ampm = parts[0];
+        _ampmIdx = (ampm == '오후') ? 1 : 0;
+        final hm = parts[1].split(':');
+        if (hm.length >= 2) {
+          final h = int.tryParse(hm[0]) ?? 6;
+          final m = int.tryParse(hm[1]) ?? 0;
+          _hourIdx = (h >= 1 && h <= 12) ? h - 1 : 0;
+          _minIdx = (m >= 0 && m < 60) ? m : 0;
+        }
+      }
+    } else {
+      final currentDay = context.read<AppProvider>().selectedDay;
+      final dayIdx = _days.indexOf(currentDay);
+      if (dayIdx != -1) _dayIdx = dayIdx;
+    }
 
     _ampmController = FixedExtentScrollController(initialItem: _ampmIdx);
     _hourController = FixedExtentScrollController(initialItem: _hourIdx);
@@ -311,17 +334,28 @@ class _AddRoutineModalState extends State<_AddRoutineModal> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   TextButton(onPressed: () => Navigator.pop(context), child: Text('취소', style: TextStyle(color: isDark ? const Color(0xFF8B91A8) : Colors.black54))),
-                  Text('루틴 추가', style: TextStyle(color: isDark ? Colors.white : Colors.black, fontSize: 17, fontWeight: FontWeight.bold)),
+                  Text(widget.routine != null ? '루틴 수정' : '루틴 추가', style: TextStyle(color: isDark ? Colors.white : Colors.black, fontSize: 17, fontWeight: FontWeight.bold)),
                   TextButton(
                     onPressed: () {
                       final timeStr = '${_ampmIdx == 0 ? "오전" : "오후"} ${(_hourIdx + 1).toString().padLeft(2, '0')}:${_minIdx.toString().padLeft(2, '0')}';
-                      context.read<AppProvider>().addRoutine(
-                        name: _nameController.text,
-                        from: _fromController.text,
-                        to: _toController.text,
-                        time: timeStr,
-                        day: _days[_dayIdx],
-                      );
+                      if (widget.routine != null) {
+                        context.read<AppProvider>().updateRoutine(
+                          id: widget.routine!.id,
+                          name: _nameController.text,
+                          from: _fromController.text,
+                          to: _toController.text,
+                          time: timeStr,
+                          day: _days[_dayIdx],
+                        );
+                      } else {
+                        context.read<AppProvider>().addRoutine(
+                          name: _nameController.text,
+                          from: _fromController.text,
+                          to: _toController.text,
+                          time: timeStr,
+                          day: _days[_dayIdx],
+                        );
+                      }
                       Navigator.pop(context);
                     },
                     child: const Text('저장', style: TextStyle(color: Color(0xFF3D7EFF), fontWeight: FontWeight.bold)),
