@@ -44,6 +44,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    _currentPosition = LatLng(37.5666, 126.9784); // 기본 위치(서울시청) 설정으로 즉시 지도 렌더링
     _initializeLocationAndCompass();
   }
 
