@@ -223,8 +223,16 @@ class AppProvider extends ChangeNotifier {
   /// 등록된 목적지 및 요일별 루틴에 대해 현재 위치에서의 경로를 분석하여 실시간 정보를 위젯에 동기화합니다.
   Future<void> _checkLastBusForAlarms() async {
     if (_destinationAlarms.isEmpty && _routines.isEmpty) {
-      await _updateWidgetData("대기 중", "막차시간이 아닙니다", "등록된 목적지가 없습니다");
-      return;
+      if (_favoritePlaces.isNotEmpty) {
+        final schoolPlace = _favoritePlaces.firstWhere(
+          (p) => p.name.contains('학교') || (p.alias?.contains('학교') ?? false),
+          orElse: () => _favoritePlaces.first,
+        );
+        _destinationAlarms = [DestinationAlarm(destination: schoolPlace)];
+      } else {
+        await _updateWidgetData("대기 중", "막차시간이 아닙니다", "등록된 목적지가 없습니다");
+        return;
+      }
     }
     
     final now = DateTime.now();
@@ -236,12 +244,12 @@ class AppProvider extends ChangeNotifier {
     final currentDayStr = weekdays[now.weekday - 1];
     final todayRoutines = _routines.where((r) => r.enabled && r.day == currentDayStr).toList();
 
-    // 💡 [수석 개발자] 막차 트래킹 가동 시간대(18:00~00:00) 또는 오늘 활성화된 루틴이 있는 경우 가동
-    final isLastBusTrackingTime = (hour >= 18 && hour < 24);
+    // 💡 [수석 개발자] 막차 트래킹 가동 시간대(05:00~00:00) 또는 오늘 활성화된 루틴이 있는 경우 가동
+    final isLastBusTrackingTime = (hour >= 5 && hour < 24);
     final hasActiveRoutineToday = todayRoutines.isNotEmpty;
 
     if (!isLastBusTrackingTime && !hasActiveRoutineToday) {
-      await _updateWidgetData("대기 중", "막차시간이 아닙니다", "18:00 ~ 00:00 사이 가동됩니다");
+      await _updateWidgetData("대기 중", "막차시간이 아닙니다", "05:00 ~ 00:00 사이 가동됩니다");
       return;
     }
     
@@ -258,34 +266,29 @@ class AppProvider extends ChangeNotifier {
 
       try {
         final dest = LatLng(alarm.destination.lat, alarm.destination.lng);
-        final tmapData = await _tmapService.getTransitRoute(origin, dest);
+        final routes = await _fetchAndEnrichRoutesForLocation(origin, dest);
         
-        if (tmapData != null) {
-          final parsed = _tmapService.parseTmapData(tmapData);
-          final List<BusRouteInfo> routes = List<BusRouteInfo>.from(parsed['busRoutes'] ?? []);
-          
-          for (var route in routes) {
-            final startStop = route.startStopName ?? '출발 정류장';
-            final remainStr = route.busArrivalRemaining < 0 ? '도착정보없음' : '${route.busArrivalRemaining}';
-            final stopInfo = '🚏 $startStop ➔ ${alarm.destination.name} (도보 ${route.walkTimeRemaining}분)';
+        for (var route in routes) {
+          final startStop = route.startStopName ?? '출발 정류장';
+          final remainStr = route.busArrivalRemaining == -2 ? '운행종료' : (route.busArrivalRemaining < 0 ? '도착정보없음' : '${route.busArrivalRemaining}');
+          final stopInfo = '🚏 $startStop ➔ ${alarm.destination.name} (도보 ${route.walkTimeRemaining}분)';
 
-            widgetItems.add({
-              'busName': route.busName,
-              'remainMin': remainStr,
-              'stopName': stopInfo,
-              'destinationName': alarm.destination.name,
-            });
+          widgetItems.add({
+            'busName': route.busName,
+            'remainMin': remainStr,
+            'stopName': stopInfo,
+            'destinationName': alarm.destination.name,
+          });
 
-            // 진짜 막차인 경우 즉시 푸시 알림 발송 (실시간 정보 유효 시 단 1회)
-            if (route.busArrivalRemaining >= 0 && isAfterPenultimateBusSchedule(route.busName)) {
-              _triggerLastBusNotification(
-                destName: alarm.destination.name,
-                busName: route.busName,
-                stopName: startStop,
-                remainMin: route.busArrivalRemaining,
-                walkMin: route.walkTimeRemaining,
-              );
-            }
+          // 진짜 막차인 경우 즉시 푸시 알림 발송 (실시간 정보 유효 시 단 1회)
+          if (route.busArrivalRemaining >= 0 && isAfterPenultimateBusSchedule(route.busName)) {
+            _triggerLastBusNotification(
+              destName: alarm.destination.name,
+              busName: route.busName,
+              stopName: startStop,
+              remainMin: route.busArrivalRemaining,
+              walkMin: route.walkTimeRemaining,
+            );
           }
         }
       } catch (e) {
@@ -302,55 +305,50 @@ class AppProvider extends ChangeNotifier {
           final destLng = results[0]['lng'] as double;
           final dest = LatLng(destLat, destLng);
 
-          final tmapData = await _tmapService.getTransitRoute(origin, dest);
-          if (tmapData != null) {
-            final parsed = _tmapService.parseTmapData(tmapData);
-            final List<BusRouteInfo> routes = List<BusRouteInfo>.from(parsed['busRoutes'] ?? []);
-            
-            for (var route in routes) {
-              final startStop = route.startStopName ?? '출발 정류장';
-              final remainStr = route.busArrivalRemaining < 0 ? '도착정보없음' : '${route.busArrivalRemaining}';
-              final stopInfo = '🚏 $startStop ➔ ${routine.to} (도보 ${route.walkTimeRemaining}분)';
+          final routes = await _fetchAndEnrichRoutesForLocation(origin, dest);
+          for (var route in routes) {
+            final startStop = route.startStopName ?? '출발 정류장';
+            final remainStr = route.busArrivalRemaining == -2 ? '운행종료' : (route.busArrivalRemaining < 0 ? '도착정보없음' : '${route.busArrivalRemaining}');
+            final stopInfo = '🚏 $startStop ➔ ${routine.to} (도보 ${route.walkTimeRemaining}분)';
 
-              widgetItems.add({
-                'busName': route.busName,
-                'remainMin': remainStr,
-                'stopName': stopInfo,
-                'destinationName': routine.to,
-              });
+            widgetItems.add({
+              'busName': route.busName,
+              'remainMin': remainStr,
+              'stopName': stopInfo,
+              'destinationName': routine.to,
+            });
 
-              if (route.busArrivalRemaining >= 0 && isAfterPenultimateBusSchedule(route.busName)) {
-                _triggerLastBusNotification(
-                  destName: routine.to,
-                  busName: route.busName,
-                  stopName: startStop,
-                  remainMin: route.busArrivalRemaining,
-                  walkMin: route.walkTimeRemaining,
+            if (route.busArrivalRemaining >= 0 && isAfterPenultimateBusSchedule(route.busName)) {
+              _triggerLastBusNotification(
+                destName: routine.to,
+                busName: route.busName,
+                stopName: startStop,
+                remainMin: route.busArrivalRemaining,
+                walkMin: route.walkTimeRemaining,
+              );
+            }
+
+            // 루틴 탑승 알림 시점 체크 (설정 시각 10분 전 ~ 정시)
+            final routineMinutes = _convertToMinutes(routine.time);
+            final currentMinutes = hour * 60 + minute;
+            final diff = routineMinutes - currentMinutes;
+
+            if (diff >= 0 && diff <= 10 && route.busArrivalRemaining >= 0) {
+              final routineKey = "${routine.id}_${now.year}_${now.month}_${now.day}";
+              if (!_notifiedRoutineKeys.contains(routineKey)) {
+                _notifiedRoutineKeys.add(routineKey);
+
+                final busName = route.busName;
+                final walkMin = route.walkTimeRemaining;
+                final busArrMin = '${route.busArrivalRemaining}분 후 도착 예정';
+                final routineName = (routine.name?.trim().isNotEmpty == true) ? routine.name! : '루틴';
+
+                NotificationService().showImmediate(
+                  id: 20000 + routine.id,
+                  title: '🚌 [$routineName] $busName번 탑승 안내',
+                  body: '🚏 $startStop (도보 ${walkMin}분) | ⏱️ $busArrMin\n출발할 시간입니다. 지금 이동하세요!',
+                  payload: routine.to,
                 );
-              }
-
-              // 루틴 탑승 알림 시점 체크 (설정 시각 10분 전 ~ 정시)
-              final routineMinutes = _convertToMinutes(routine.time);
-              final currentMinutes = hour * 60 + minute;
-              final diff = routineMinutes - currentMinutes;
-
-              if (diff >= 0 && diff <= 10 && route.busArrivalRemaining >= 0) {
-                final routineKey = "${routine.id}_${now.year}_${now.month}_${now.day}";
-                if (!_notifiedRoutineKeys.contains(routineKey)) {
-                  _notifiedRoutineKeys.add(routineKey);
-
-                  final busName = route.busName;
-                  final walkMin = route.walkTimeRemaining;
-                  final busArrMin = '${route.busArrivalRemaining}분 후 도착 예정';
-                  final routineName = (routine.name?.trim().isNotEmpty == true) ? routine.name! : '루틴';
-
-                  NotificationService().showImmediate(
-                    id: 20000 + routine.id,
-                    title: '🚌 [$routineName] $busName번 탑승 안내',
-                    body: '🚏 $startStop (도보 ${walkMin}분) | ⏱️ $busArrMin\n출발할 시간입니다. 지금 이동하세요!',
-                    payload: routine.to,
-                  );
-                }
               }
             }
           }
@@ -380,7 +378,7 @@ class AppProvider extends ChangeNotifier {
     if (widgetItems.isNotEmpty) {
       await _updateWidgetDataList(widgetItems);
     } else {
-      await _updateWidgetData("대기 중", "막차시간이 아닙니다", "18:00 ~ 00:00 사이 가동됩니다");
+      await _updateWidgetData("대기 중", "막차시간이 아닙니다", "05:00 ~ 23:59 사이 가동됩니다");
     }
   }
 
@@ -436,6 +434,163 @@ class AppProvider extends ChangeNotifier {
       });
     } catch (e) {
       debugPrint('⚠️ [Widget Channel] 위젯 업데이트 채널 호출 실패: $e');
+    }
+  }
+
+  /// 💡 [수석 개발자] 경로 정보 수집 및 보정 공통 메서드 (앱 UI 계산과 알림/위젯 동기화)
+  Future<List<BusRouteInfo>> _fetchAndEnrichRoutesForLocation(LatLng origin, LatLng dest) async {
+    try {
+      final tmapData = await _tmapService.getTransitRoute(origin, dest);
+      if (tmapData == null) return [];
+
+      final parsed = _tmapService.parseTmapData(tmapData);
+      final List<BusRouteInfo> routes = List<BusRouteInfo>.from(parsed['busRoutes'] ?? []);
+      if (routes.isEmpty) return [];
+
+      final Map<String, List<BusRouteInfo>> stopGroups = {};
+      for (var route in routes) {
+        if (route.busName == '도보' || route.startStopName == null) continue;
+        stopGroups.putIfAbsent(route.startStopName!, () => []).add(route);
+      }
+
+      await Future.wait(stopGroups.entries.map((entry) async {
+        final stopName = entry.key;
+        final routesInStop = entry.value;
+        
+        try {
+          final firstRoute = routesInStop.first;
+          final stopInfo = await _busApiService.getStationByNameOrCoords(
+            name: stopName,
+            lat: firstRoute.startStopLatLng?.latitude,
+            lng: firstRoute.startStopLatLng?.longitude,
+          );
+
+          if (stopInfo != null) {
+            int realWalkTime = firstRoute.walkTimeRemaining;
+            try {
+              realWalkTime = await _tmapService.getWalkingDuration(
+                origin,
+                firstRoute.startStopLatLng ?? LatLng(0,0),
+              );
+            } catch (_) {}
+
+            final arrivals = await _busApiService.getArrivalInfo(
+              stopInfo['id'], 
+              stopName: stopName,
+              targetBusName: firstRoute.busName, 
+            );
+
+            for (var route in routesInStop) {
+              route.walkTimeRemaining = realWalkTime;
+
+              final cleanBusName = route.busName.replaceAll(RegExp(r'[^0-9]'), '');
+              final match = arrivals.firstWhere(
+                (a) {
+                  final aClean = a.busName.replaceAll(RegExp(r'[^0-9]'), '');
+                  return aClean == cleanBusName || a.busName.contains(route.busName) || route.busName.contains(a.busName);
+                },
+                orElse: () => BusRouteInfo(
+                  busName: '', busArrivalRemaining: -1, walkTimeRemaining: 0, travelDuration: 0, totalDuration: 0, routeDescription: ''
+                )
+              );
+
+              if (match.busArrivalRemaining != -1) {
+                route.busArrivalRemaining = match.busArrivalRemaining;
+                route.stopsRemaining = match.stopsRemaining; 
+                route.nextBusArrivalRemaining = match.nextBusArrivalRemaining;
+                route.nextBusStopsRemaining = match.nextBusStopsRemaining;
+              } else if (arrivals.any((a) => a.busArrivalRemaining == -2)) {
+                route.busArrivalRemaining = -2;
+              }
+              route.updateCalculatedFields();
+            }
+          }
+        } catch (e) {
+          debugPrint('⚠️ [Enrich Helper] 정류장 보정 실패: $e');
+        }
+      }));
+
+      return routes;
+    } catch (e) {
+      debugPrint('❌ [FetchAndEnrichRoutes Error] $e');
+      return [];
+    }
+  }
+
+  Future<void> sendTestNotificationForDestination(DestinationAlarm alarm) async {
+    try {
+      final currentPos = _state.pins.firstWhere((p) => p.type == PinType.depart, 
+        orElse: () => MapPin(x: 35.1601, y: 126.8515, type: PinType.depart));
+      final origin = LatLng(currentPos.x, currentPos.y);
+      final dest = LatLng(alarm.destination.lat, alarm.destination.lng);
+
+      final routes = await _fetchAndEnrichRoutesForLocation(origin, dest);
+      if (routes.isNotEmpty) {
+        final route = routes.first;
+        final startStop = route.startStopName ?? '출발 정류장';
+        
+        final remainStr = route.busArrivalRemaining == -2 ? '운행 종료' : (route.busArrivalRemaining < 0 ? '도착정보없음' : '${route.busArrivalRemaining}분 후 도착');
+        final totalTime = route.totalETA > 0 ? route.totalETA : route.totalDuration;
+        
+        await NotificationService().showImmediate(
+          id: alarm.destination.id.hashCode,
+          title: '${alarm.destination.name} 행 막차 안내',
+          body: '출발 정류장: $startStop (도보 ${route.walkTimeRemaining}분)\n탑승 버스: ${route.busName} | 실시간 도착: $remainStr\n총 소요시간: ${totalTime}분',
+          payload: alarm.destination.name,
+        );
+        return;
+      }
+
+      await NotificationService().showImmediate(
+        id: alarm.destination.id.hashCode,
+        title: '${alarm.destination.name} 행 버스 안내',
+        body: '현재 실시간 운행 중인 버스 경로 정보를 찾을 수 없습니다.',
+        payload: alarm.destination.name,
+      );
+    } catch (e) {
+      debugPrint('❌ [Test Notification Error] $e');
+    }
+  }
+
+  Future<void> sendTestNotificationForRoutine(Routine routine) async {
+    try {
+      final currentPos = _state.pins.firstWhere((p) => p.type == PinType.depart, 
+        orElse: () => MapPin(x: 35.1601, y: 126.8515, type: PinType.depart));
+      final origin = LatLng(currentPos.x, currentPos.y);
+
+      final results = await _kakaoLocalService.searchKeywords(routine.to);
+      if (results.isNotEmpty) {
+        final destLat = results[0]['lat'] as double;
+        final destLng = results[0]['lng'] as double;
+        final dest = LatLng(destLat, destLng);
+
+        final routes = await _fetchAndEnrichRoutesForLocation(origin, dest);
+        if (routes.isNotEmpty) {
+          final route = routes.first;
+          final startStop = route.startStopName ?? '출발 정류장';
+          
+          final remainStr = route.busArrivalRemaining == -2 ? '운행 종료' : (route.busArrivalRemaining < 0 ? '도착정보없음' : '${route.busArrivalRemaining}분 후 도착');
+          final totalTime = route.totalETA > 0 ? route.totalETA : route.totalDuration;
+          final routineName = (routine.name?.trim().isNotEmpty == true) ? routine.name! : '루틴';
+
+          await NotificationService().showImmediate(
+            id: 20000 + routine.id,
+            title: '$routineName (${routine.to} 행) 안내',
+            body: '출발 정류장: $startStop (도보 ${route.walkTimeRemaining}분)\n탑승 버스: ${route.busName} | 실시간 도착: $remainStr\n총 소요시간: ${totalTime}분',
+            payload: routine.to,
+          );
+          return;
+        }
+      }
+
+      await NotificationService().showImmediate(
+        id: 20000 + routine.id,
+        title: '${routine.to} 행 안내',
+        body: '현재 실시간 운행 중인 버스 경로 정보를 찾을 수 없습니다.',
+        payload: routine.to,
+      );
+    } catch (e) {
+      debugPrint('❌ [Test Notification Routine Error] $e');
     }
   }
 
@@ -938,28 +1093,42 @@ class AppProvider extends ChangeNotifier {
     
     debugPrint('🎯 [Provider] 목적지 설정 시도: $label ($lat, $lng)');
     
-    if (lat != null && lng != null) {
-      final cleanedPins = _state.pins.where((p) => p.type != PinType.arrive && p.type != PinType.busStop).toList();
-      cleanedPins.add(MapPin(x: lat, y: lng, type: PinType.arrive, label: label)); 
-      _shouldMoveToArrival = true; 
-      _updateState(_state.copyWith(pins: cleanedPins, updateTrigger: _state.updateTrigger + 1));
-      _triggerAnalysis();
-    } else {
-      // 💡 [수석 개발자] 좌표가 없는 경우 즐겨찾기에서 매핑 시도 (별칭 또는 이름으로 검색)
+    double? targetLat = lat;
+    double? targetLng = lng;
+
+    if (targetLat == null || targetLng == null) {
       final Place place = _favoritePlaces.firstWhere(
         (p) => (p.alias ?? p.name) == label || p.name == label, 
         orElse: () => Place(id: '0', name: '', lat: 0, lng: 0, address: '')
       );
       
       if (place.lat != 0) {
-        final cleanedPins = _state.pins.where((p) => p.type != PinType.arrive && p.type != PinType.busStop).toList();
-        cleanedPins.add(MapPin(x: place.lat, y: place.lng, type: PinType.arrive, label: place.alias ?? place.name));
-        _shouldMoveToArrival = true; 
-        _updateState(_state.copyWith(pins: cleanedPins, updateTrigger: _state.updateTrigger + 1));
-        _triggerAnalysis();
+        targetLat = place.lat;
+        targetLng = place.lng;
       } else {
-        debugPrint('⚠️ [Provider] 해당 장소의 좌표를 찾을 수 없습니다.');
+        try {
+          final results = await _kakaoLocalService.searchKeywords(label);
+          if (results.isNotEmpty) {
+            targetLat = results[0]['lat'] as double;
+            targetLng = results[0]['lng'] as double;
+          }
+        } catch (e) {
+          debugPrint('⚠️ [Provider] 목적지 카카오 검색 실패: $e');
+        }
       }
+    }
+
+    _tempArriveLat = targetLat;
+    _tempArriveLng = targetLng;
+
+    if (targetLat != null && targetLng != null && targetLat != 0) {
+      final cleanedPins = _state.pins.where((p) => p.type != PinType.arrive && p.type != PinType.busStop).toList();
+      cleanedPins.add(MapPin(x: targetLat, y: targetLng, type: PinType.arrive, label: label)); 
+      _shouldMoveToArrival = true; 
+      _updateState(_state.copyWith(pins: cleanedPins, updateTrigger: _state.updateTrigger + 1));
+      _triggerAnalysis();
+    } else {
+      debugPrint('⚠️ [Provider] 해당 장소의 좌표를 찾을 수 없습니다: $label');
     }
   }
 
@@ -1042,19 +1211,42 @@ class AppProvider extends ChangeNotifier {
     }
 
     _arriveLabel = _tempArriveLabel;
-    
-    List<MapPin> newPins = _state.pins.where((p) => p.type != PinType.arrive && p.type != PinType.busStop).toList();
-    
-    if (_tempArriveLat != null && _tempArriveLng != null) {
-      newPins.add(MapPin(x: _tempArriveLat!, y: _tempArriveLng!, type: PinType.arrive, label: _tempArriveLabel));
-    } else if (_tempArriveLabel.isNotEmpty) {
-      final place = _favoritePlaces.firstWhere(
+
+    // 좌표가 없는 경우 즐겨찾기 또는 카카오 검색으로 조회 시도
+    if (_tempArriveLat == null || _tempArriveLng == null || _tempArriveLat == 0) {
+      final Place place = _favoritePlaces.firstWhere(
         (p) => (p.alias ?? p.name) == _tempArriveLabel || p.name == _tempArriveLabel, 
         orElse: () => Place(id: '0', name: '', lat: 0, lng: 0, address: '')
       );
       if (place.lat != 0) {
-        newPins.add(MapPin(x: place.lat, y: place.lng, type: PinType.arrive, label: _tempArriveLabel));
+        _tempArriveLat = place.lat;
+        _tempArriveLng = place.lng;
+      } else {
+        try {
+          final results = await _kakaoLocalService.searchKeywords(_tempArriveLabel);
+          if (results.isNotEmpty) {
+            _tempArriveLat = results[0]['lat'] as double;
+            _tempArriveLng = results[0]['lng'] as double;
+          }
+        } catch (e) {
+          debugPrint('⚠️ [Provider] 길안내 목적지 카카오 검색 실패: $e');
+        }
       }
+    }
+    
+    List<MapPin> newPins = _state.pins.where((p) => p.type != PinType.arrive && p.type != PinType.busStop).toList();
+    
+    if (_tempArriveLat != null && _tempArriveLng != null && _tempArriveLat != 0) {
+      newPins.add(MapPin(x: _tempArriveLat!, y: _tempArriveLng!, type: PinType.arrive, label: _tempArriveLabel));
+    }
+
+    if (!newPins.any((p) => p.type == PinType.arrive)) {
+      debugPrint('⚠️ [Provider] 도착지 좌표를 찾을 수 없어 길안내를 시작할 수 없습니다: $_tempArriveLabel');
+      _updateState(_state.copyWith(
+        errorMessage: '목적지 "${_tempArriveLabel}"의 위치를 찾을 수 없습니다.',
+        isAnalyzing: false,
+      ));
+      return;
     }
 
     _updateState(_state.copyWith(

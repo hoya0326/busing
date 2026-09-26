@@ -190,6 +190,20 @@ class _NotificationScreenState extends State<NotificationScreen> {
               ),
             ],
           ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: () => provider.sendTestNotificationForDestination(alarm),
+              icon: const Icon(Icons.notification_add, size: 14, color: Color(0xFF3D7EFF)),
+              label: const Text('지금 즉시 알림 테스트 보내기', style: TextStyle(fontSize: 12, color: Color(0xFF3D7EFF))),
+              style: OutlinedButton.styleFrom(
+                side: BorderSide(color: const Color(0xFF3D7EFF).withOpacity(0.3)),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                padding: const EdgeInsets.symmetric(vertical: 8),
+              ),
+            ),
+          ),
         ],
       ),
     );

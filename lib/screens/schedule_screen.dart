@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart'; // 💡 context.go 사용을 위해 �
 import 'package:provider/provider.dart';
 import '../app_provider.dart';
 import '../models.dart';
+import '../services/notification_service.dart';
 
 class ScheduleScreen extends StatelessWidget {
   const ScheduleScreen({super.key});
@@ -215,6 +216,20 @@ class ScheduleScreen extends StatelessWidget {
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () => appProvider.sendTestNotificationForRoutine(routine),
+                icon: const Icon(Icons.notification_add, size: 14, color: Color(0xFF3D7EFF)),
+                label: const Text('지금 즉시 알림 테스트 보내기', style: TextStyle(fontSize: 12, color: Color(0xFF3D7EFF))),
+                style: OutlinedButton.styleFrom(
+                  side: BorderSide(color: const Color(0xFF3D7EFF).withOpacity(0.3)),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                ),
+              ),
             ),
           ],
         ),

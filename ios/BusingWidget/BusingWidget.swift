@@ -67,7 +67,7 @@ struct BusingWidgetEntryView : View {
     var body: some View {
         let calendar = Calendar.current
         let hour = calendar.component(.hour, from: entry.date)
-        let isNightTime = hour >= 18 && hour < 24 // 18:00 ~ 00:00
+        let isNightTime = hour >= 5 && hour < 24 // 05:00 ~ 23:59
         let hasValidData = entry.busName != "데이터 로딩 중" && entry.remainMin != "-" && entry.remainMin != "막차시간이 아닙니다" && !entry.busName.isEmpty
 
         let mainText: String
@@ -84,7 +84,7 @@ struct BusingWidgetEntryView : View {
             }
         } else if !isNightTime {
             mainText = "막차시간이 아닙니다"
-            subText = "18:00 ~ 00:00 사이 가동됩니다"
+            subText = "05:00 ~ 23:59 사이 가동됩니다"
         } else {
             mainText = "실시간 도착 정보 대기 중"
             subText = "🚏 \(entry.stopName) ➔ \(entry.destination)"
