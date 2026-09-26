@@ -1,148 +1,182 @@
+//
+//  BusingWidget.swift
+//  BusingWidget
+//
+//  Created by hoyeong on 9/23/26.
+//
+
 import WidgetKit
 import SwiftUI
+import AppIntents
 
-// 💡 [수석 개발자] Flutter와 iOS Native Widget 간 데이터 연동
-func getWidgetEntry() -> SimpleEntry {
-    let prefs = UserDefaults(suiteName: "group.com.example.busing") ?? UserDefaults.standard
-
-    let count = max(1, prefs.integer(forKey: "flutter.widget_count"))
-    var index = prefs.integer(forKey: "flutter.widget_index")
-    if index < 0 { index = 0 }
-    if index >= count { index = count - 1 }
-
-    let busName = prefs.string(forKey: "flutter.widget_busName_\(index)")
-        ?? prefs.string(forKey: "flutter.widget_busName") ?? "대기 중"
-    let remainMin = prefs.string(forKey: "flutter.widget_remainMin_\(index)")
-        ?? prefs.string(forKey: "flutter.widget_remainMin") ?? "막차시간이 아닙니다"
-    let stopName = prefs.string(forKey: "flutter.widget_stopName_\(index)")
-        ?? prefs.string(forKey: "flutter.widget_stopName") ?? "18:00 ~ 00:00 사이 가동됩니다"
-
-    return SimpleEntry(date: Date(), count: count, index: index, busName: busName, remainMin: remainMin, stopName: stopName)
-}
-
-struct Provider: TimelineProvider {
+struct Provider: AppIntentTimelineProvider {
     func placeholder(in context: Context) -> SimpleEntry {
-        SimpleEntry(date: Date(), count: 1, index: 0, busName: "대기 중", remainMin: "막차시간이 아닙니다", stopName: "18:00 ~ 00:00 사이 가동됩니다")
+        SimpleEntry(date: Date(), configuration: ConfigurationAppIntent(), busName: "급행:첨단09", remainMin: "3", stopName: "🚏 광주버스종합터미널 ➔ 조선대학교 (도보 5분)", destination: "조선대학교", count: 1, index: 0)
     }
 
-    func getSnapshot(in context: Context, completion: @escaping (SimpleEntry) -> ()) {
-        completion(getWidgetEntry())
+    func snapshot(for configuration: ConfigurationAppIntent, in context: Context) async -> SimpleEntry {
+        return getEntry(configuration: configuration)
+    }
+    
+    func timeline(for configuration: ConfigurationAppIntent, in context: Context) async -> Timeline<SimpleEntry> {
+        let entry = getEntry(configuration: configuration)
+        let nextUpdate = Calendar.current.date(byAdding: .minute, value: 1, to: Date()) ?? Date().addingTimeInterval(60)
+        return Timeline(entries: [entry], policy: .after(nextUpdate))
     }
 
-    func getTimeline(in context: Context, completion: @escaping (Timeline<Entry>) -> ()) {
-        let entry = getWidgetEntry()
-        let nextUpdate = Calendar.current.date(byAdding: .minute, value: 5, to: Date())!
-        let timeline = Timeline(entries: [entry], policy: .after(nextUpdate))
-        completion(timeline)
+    private func getEntry(configuration: ConfigurationAppIntent) -> SimpleEntry {
+        let defaults = UserDefaults(suiteName: "group.com.example.busing")
+        let count = max(1, defaults?.integer(forKey: "widget_count") ?? 1)
+        var index = defaults?.integer(forKey: "widget_index") ?? 0
+        if index < 0 { index = 0 }
+        if index >= count { index = count - 1 }
+
+        let busName = defaults?.string(forKey: "widget_busName_\(index)") ?? defaults?.string(forKey: "widget_busName") ?? "데이터 로딩 중"
+        let remainMin = defaults?.string(forKey: "widget_remainMin_\(index)") ?? defaults?.string(forKey: "widget_remainMin") ?? "-"
+        let stopName = defaults?.string(forKey: "widget_stopName_\(index)") ?? defaults?.string(forKey: "widget_stopName") ?? "현재 위치"
+        let destination = defaults?.string(forKey: "widget_destination_\(index)") ?? defaults?.string(forKey: "widget_destination") ?? "목적지"
+
+        return SimpleEntry(
+            date: Date(),
+            configuration: configuration,
+            busName: busName,
+            remainMin: remainMin,
+            stopName: stopName,
+            destination: destination,
+            count: count,
+            index: index
+        )
     }
 }
 
 struct SimpleEntry: TimelineEntry {
     let date: Date
-    let count: Int
-    let index: Int
+    let configuration: ConfigurationAppIntent
     let busName: String
     let remainMin: String
     let stopName: String
+    let destination: String
+    let count: Int
+    let index: Int
 }
 
+@available(iOS 17.0, *)
 struct BusingWidgetEntryView : View {
     var entry: Provider.Entry
 
     var body: some View {
+        let calendar = Calendar.current
+        let hour = calendar.component(.hour, from: entry.date)
+        let isNightTime = hour >= 18 && hour < 24 // 18:00 ~ 00:00
+        let hasValidData = entry.busName != "데이터 로딩 중" && entry.remainMin != "-" && entry.remainMin != "막차시간이 아닙니다" && !entry.busName.isEmpty
+
+        let mainText: String
+        let subText: String
+
+        if hasValidData {
+            let formattedStopInfo = entry.stopName.contains("🚏") ? entry.stopName : "🚏 \(entry.stopName) ➔ \(entry.destination)"
+            if entry.remainMin == "도착정보없음" || entry.remainMin == "-1" || entry.remainMin == "-2" {
+                mainText = "\(entry.busName) | 도착정보없음"
+                subText = formattedStopInfo
+            } else {
+                mainText = "\(entry.busName) | \(entry.remainMin)분 후 도착"
+                subText = formattedStopInfo
+            }
+        } else if !isNightTime {
+            mainText = "막차시간이 아닙니다"
+            subText = "18:00 ~ 00:00 사이 가동됩니다"
+        } else {
+            mainText = "실시간 도착 정보 대기 중"
+            subText = "🚏 \(entry.stopName) ➔ \(entry.destination)"
+        }
+
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "HH:mm"
+        let timeString = "\(dateFormatter.string(from: entry.date)) 기준 업데이트"
+
         let hasPrev = entry.index > 0
         let hasNext = entry.index < entry.count - 1
 
-        VStack(alignment: .leading, spacing: 6) {
-            // 상단 헤더: 타이틀 + 좌우 이동 버튼 + 새로고침 아이콘
+        let activeColor = Color(red: 0.38, green: 0.65, blue: 0.98) // #60A5FA
+        let disabledColor = Color(red: 0.29, green: 0.33, blue: 0.39) // #4B5563
+
+        return VStack(alignment: .leading, spacing: 6) {
+            // Header
             HStack(spacing: 4) {
                 Text("🚌 버씽 막차알림 정보")
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundColor(.primary)
+                    .foregroundColor(.white)
 
                 Spacer()
 
-                // 이전 버튼
-                Image(systemName: "chevron.left")
-                    .foregroundColor(hasPrev ? Color(red: 96/255, green: 165/255, blue: 250/255) : Color.gray.opacity(0.4))
-                    .font(.system(size: 12, weight: .bold))
+                // Prev Button
+                Button(intent: PrevPageIntent()) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(hasPrev ? activeColor : disabledColor)
+                }
+                .buttonStyle(.plain)
+                .disabled(!hasPrev)
 
-                // 페이지 표시
+                // Page text
                 Text("\(entry.index + 1)/\(entry.count)")
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.white.opacity(0.8))
 
-                // 다음 버튼
-                Image(systemName: "chevron.right")
-                    .foregroundColor(hasNext ? Color(red: 96/255, green: 165/255, blue: 250/255) : Color.gray.opacity(0.4))
-                    .font(.system(size: 12, weight: .bold))
+                // Next Button
+                Button(intent: NextPageIntent()) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(hasNext ? activeColor : disabledColor)
+                }
+                .buttonStyle(.plain)
+                .disabled(!hasNext)
 
-                // 새로고침 버튼
-                Image(systemName: "arrow.clockwise")
-                    .foregroundColor(.gray.opacity(0.6))
-                    .font(.system(size: 13))
-                    .padding(.leading, 2)
+                // Refresh Button
+                Button(intent: RefreshWidgetIntent()) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(.white.opacity(0.8))
+                }
+                .buttonStyle(.plain)
             }
 
-            Spacer(minLength: 0)
+            Divider()
+                .background(Color.white.opacity(0.2))
 
-            // 본문 실시간 안내
-            if entry.remainMin == "막차시간이 아닙니다" || entry.busName == "대기 중" {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("막차시간이 아닙니다")
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundColor(.secondary)
-                    Text(entry.stopName.isEmpty ? "18:00 ~ 00:00 사이 가동됩니다" : entry.stopName)
-                        .font(.system(size: 12))
-                        .foregroundColor(.secondary)
-                }
-            } else {
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 4) {
-                        Text("\(entry.busName) |")
-                            .font(.system(size: 15, weight: .bold))
-                            .foregroundColor(.primary)
+            // Main Info
+            Text(mainText)
+                .font(.system(size: 15, weight: .bold))
+                .foregroundColor(Color(red: 0.38, green: 0.65, blue: 0.98))
+                .lineLimit(1)
 
-                        if entry.remainMin == "도착정보없음" || entry.remainMin == "-1" || entry.remainMin == "-2" {
-                            Text("도착정보없음")
-                                .font(.system(size: 15, weight: .bold))
-                                .foregroundColor(.secondary)
-                        } else {
-                            Text("\(entry.remainMin)분 후 도착")
-                                .font(.system(size: 15, weight: .bold))
-                                .foregroundColor(.primary)
-                        }
-                    }
+            // Sub Info
+            Text(subText)
+                .font(.system(size: 12, weight: .regular))
+                .foregroundColor(.white.opacity(0.9))
+                .lineLimit(1)
 
-                    Text("\(entry.stopName)")
-                        .font(.system(size: 12))
-                        .foregroundColor(.secondary)
-                }
-            }
-
-            Spacer(minLength: 0)
-
-            Text("\(entry.date, style: .time) 기준 업데이트")
-                .font(.system(size: 10))
-                .foregroundColor(.gray)
+            // Footer Time
+            Text(timeString)
+                .font(.system(size: 10, weight: .regular))
+                .foregroundColor(.white.opacity(0.5))
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(Color(UIColor.systemBackground))
-        .widgetURL(URL(string: "busing://widget_click")) // 💡 위젯 클릭 시 딥링크 전달
+        .padding(12)
+        .containerBackground(Color(red: 0.11, green: 0.13, blue: 0.16), for: .widget)
+        .widgetURL(URL(string: "busing://guidance"))
     }
 }
 
-@main
+@available(iOS 17.0, *)
 struct BusingWidget: Widget {
     let kind: String = "BusingWidget"
 
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: kind, provider: Provider()) { entry in
+        AppIntentConfiguration(kind: kind, intent: ConfigurationAppIntent.self, provider: Provider()) { entry in
             BusingWidgetEntryView(entry: entry)
         }
+        .supportedFamilies([.systemMedium])
         .configurationDisplayName("버씽 막차알림 정보")
-        .description("자주 타는 버스의 실시간 막차 위치와 도착 예정 시간을 홈 화면에서 확인하세요.")
-        .supportedFamilies([.systemMedium]) // 💡 가로형(Medium) 위젯 사이즈 전용
+        .description("실시간 막차 버스 도착 정보를 확인하세요.")
     }
 }

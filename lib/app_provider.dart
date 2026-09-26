@@ -139,6 +139,7 @@ class AppProvider extends ChangeNotifier {
     _state = HomeState(
       pins: [MapPin(x: 35.1601, y: 126.8515, type: PinType.depart)]
     );
+    _initStorageData();
     _startRefreshTimer();
 
     // 💡 푸시 알림 클릭 시 해당 목적지 길안내 즉시 가동
@@ -200,6 +201,14 @@ class AppProvider extends ChangeNotifier {
     }
   }
 
+  Future<void> _initStorageData() async {
+    try {
+      _destinationAlarms = await _storageService.getDestinationAlarms();
+      _routines = await _storageService.getRoutines();
+      _checkLastBusForAlarms();
+    } catch (_) {}
+  }
+
   void _startRefreshTimer() {
     Timer.periodic(const Duration(seconds: 2), (timer) {
       checkWidgetLaunch(); // 💡 백그라운드에서 위젯 터치 시 즉시 감지
@@ -228,7 +237,7 @@ class AppProvider extends ChangeNotifier {
     final todayRoutines = _routines.where((r) => r.enabled && r.day == currentDayStr).toList();
 
     // 💡 [수석 개발자] 막차 트래킹 가동 시간대(18:00~00:00) 또는 오늘 활성화된 루틴이 있는 경우 가동
-    final isLastBusTrackingTime = (hour >= 18);
+    final isLastBusTrackingTime = (hour >= 18 && hour < 24);
     final hasActiveRoutineToday = todayRoutines.isNotEmpty;
 
     if (!isLastBusTrackingTime && !hasActiveRoutineToday) {

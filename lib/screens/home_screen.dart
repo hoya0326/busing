@@ -44,6 +44,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    _currentPosition = LatLng(37.5666, 126.9784); // 기본 위치(서울시청) 설정으로 즉시 지도 렌더링
     _initializeLocationAndCompass();
   }
 
@@ -104,11 +105,18 @@ class _HomeScreenState extends State<HomeScreen> {
       _currentPosition = newLatLng;
     });
 
+    if (moveCamera && mapController != null) {
+      mapController!.setCenter(newLatLng);
+    }
+
     context.read<AppProvider>().updateDepartLocation(lat, lng);
 
     if (_isFirstLocationSync && mounted) {
       _isFirstLocationSync = false;
       context.read<AppProvider>().updateDefaultPlacesWithLocation(lat, lng);
+      if (mapController != null) {
+        mapController!.setCenter(newLatLng);
+      }
     }
   }
 
@@ -227,6 +235,9 @@ class _HomeScreenState extends State<HomeScreen> {
   void _onMapCreated(KakaoMapController controller) {
     mapController = controller;
     mapController?.setZoomable(true);
+    if (_currentPosition != null) {
+      mapController?.setCenter(_currentPosition!);
+    }
   }
 
   void _zoomIn() {
