@@ -44,4 +44,15 @@ post_install do |installer|
       config.build_settings['EXPANDED_CODE_SIGN_IDENTITY'] = ''
     end
   end
+
+  installer.aggregate_targets.each do |aggregate_target|
+    aggregate_target.user_project.targets.each do |target|
+      target.build_configurations.each do |config|
+        if config.name == 'Debug'
+          config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
+        end
+      end
+      aggregate_target.user_project.save
+    end
+  end
 end

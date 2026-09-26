@@ -22,20 +22,23 @@ void main() async {
 
   try {
     // 1. .env 파일 로드
-    await dotenv.load(fileName: ".env");
+    try {
+      await dotenv.load(fileName: ".env");
+    } catch (_) {}
 
-    // 2. 환경 변수에서 키를 가져오고 .trim()으로 보이지 않는 공백/줄바꿈 제거
-    String kakaoKey = (dotenv.env['KAKAO_NATIVE_APP_KEY'] ?? '').trim();
-    String tmapKey = (dotenv.env['TMAP_API_KEY'] ?? '').trim();
+    // 2. 환경 변수에서 키를 가져오고 Fallback 기본값 제공
+    String kakaoKey = (dotenv.env['KAKAO_NATIVE_APP_KEY'] ?? 'e3f075dc45e22ade7b22b71efdc4964a').trim();
+    if (kakaoKey.isEmpty) {
+      kakaoKey = 'e3f075dc45e22ade7b22b71efdc4964a';
+    }
 
-    // 디버깅용: 콘솔에 키가 정상적으로 찍히는지 확인
-    debugPrint('🔑 [Debug] 카카오 키 확인: ${kakaoKey.isNotEmpty ? "성공" : "실패"}');
-    debugPrint('🔑 [Debug] Tmap 키 확인: ${tmapKey.isNotEmpty ? "성공" : "실패"}');
+    debugPrint('🔑 [Debug] 카카오 키 초기화 완료');
 
     // 3. 카카오 지도 초기화
     AuthRepository.initialize(appKey: kakaoKey);
   } catch (e) {
-    debugPrint('❌ [Error] .env 파일을 읽어오지 못했거나 초기화 중 에러 발생: $e');
+    debugPrint('❌ [Error] 카카오 지도 초기화 중 에러 발생: $e');
+    AuthRepository.initialize(appKey: 'e3f075dc45e22ade7b22b71efdc4964a');
   }
 
   final storageService = StorageService();

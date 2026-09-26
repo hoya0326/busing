@@ -34,6 +34,17 @@ class NotificationService {
       },
     );
 
+    if (Platform.isIOS) {
+      await _plugin
+          .resolvePlatformSpecificImplementation<
+              IOSFlutterLocalNotificationsPlugin>()
+          ?.requestPermissions(
+            alert: true,
+            badge: true,
+            sound: true,
+          );
+    }
+
     // 💡 [수석 개발자] Android 13+ 알림 및 14+ 정밀 알람 권한 요청
     if (Platform.isAndroid) {
       final androidPlugin = _plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
