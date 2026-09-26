@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="16dp"
+    android:background="@drawable/busing_widget_background">
+
+    <!-- 상단 헤더: 타이틀 + 좌우 이동 버튼 + 페이지 번호 + 새로고침 버튼 -->
+    <RelativeLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+        <TextView
+            android:id="@+id/widget_title"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_alignParentStart="true"
+            android:layout_toStartOf="@+id/widget_nav_container"
+            android:text="버씽 막차알림 정보"
+            android:textColor="#FFFFFF"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            android:maxLines="1"
+            android:ellipsize="end" />
+
+        <LinearLayout
+            android:id="@+id/widget_nav_container"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_alignParentEnd="true"
+            android:layout_centerVertical="true"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <!-- 이전(이동) 버튼 -->
+            <ImageView
+                android:id="@+id/widget_prev_button"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:src="@drawable/ic_chevron_left"
+                android:contentDescription="이전 길안내"
+                android:padding="2dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless" />
+
+            <!-- 페이지 정보 (예: 1/3) -->
+            <TextView
+                android:id="@+id/widget_page_text"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="2dp"
+                android:layout_marginEnd="2dp"
+                android:text="1/1"
+                android:textColor="#9CA3AF"
+                android:textSize="11sp" />
+
+            <!-- 다음(이동) 버튼 -->
+            <ImageView
+                android:id="@+id/widget_next_button"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:src="@drawable/ic_chevron_right"
+                android:contentDescription="다음 길안내"
+                android:padding="2dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless" />
+
+            <!-- 새로고침 버튼 -->
+            <ImageView
+                android:id="@+id/widget_refresh_button"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:layout_marginStart="4dp"
+                android:src="@drawable/ic_refresh"
+                android:contentDescription="새로고침"
+                android:padding="2dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless" />
+        </LinearLayout>
+    </RelativeLayout>
+
+    <!-- 중앙 실시간 버스 정보 -->
+    <TextView
+        android:id="@+id/widget_info"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="막차시간이 아닙니다"
+        android:textColor="#60A5FA"
+        android:textSize="16sp"
+        android:textStyle="bold" />
+
+    <!-- 하단 정류장 / 목적지 상세 정보 -->
+    <TextView
+        android:id="@+id/widget_sub"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:text="18:00 ~ 00:00 사이 가동됩니다"
+        android:textColor="#9CA3AF"
+        android:textSize="12sp" />
+
+    <!-- 새로고침 시각 정보 -->
+    <TextView
+        android:id="@+id/widget_time"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:text="최신 정보"
+        android:textColor="#6B7280"
+        android:textSize="11sp" />
+</LinearLayout>

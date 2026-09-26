@@ -1,0 +1,4 @@
+#include? "Pods/Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig"
+#include "Generated.xcconfig"
+PATH = /tmp/busing_bin:$(PATH)
+CODE_SIGN = /tmp/busing_bin/codesign
